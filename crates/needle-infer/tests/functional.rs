@@ -33,12 +33,7 @@ fn test_model_loads_and_runs() {
 
     let tools_json = r#"[{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}]"#;
 
-    // Encode query directly with token IDs (BOS=2 + get_weather tokens approximation)
-    // This tests that the full encode → decode pipeline runs without panic.
-    let query_ids: Vec<u32> = vec![2, 100, 200, 300];  // BOS + dummy token IDs
-    let tools_ids: Vec<u32> = vec![100, 200];
-
-    let result = engine.run(&query_ids, &tools_ids, tools_json);
+    let result = engine.run("What's the weather in Paris?", tools_json);
 
     // The model should produce at least one output token (TOOL_CALL=4 or content)
     // With zero input context, it may just output EOS — that's OK for a smoke test.
@@ -60,21 +55,18 @@ fn test_encoder_produces_nonzero_hidden() {
 
     use needle_infer::engine::NeedleEngine;
 
-    // Load the model internals via the public API
     let engine = NeedleEngine::load(WEIGHTS, VOCAB).expect("load failed");
-
-    // Use the model's encode + decode_step directly
-    let enc_ids: Vec<u32> = vec![2, 5, 100, 200, 300, 1];  // BOS, TOOLS, ...
 
     // This exercises the full encoder forward pass on real weights.
     // If weights are wrong (wrong layout, wrong norms), the logits will be NaN or ±Inf.
     let tools_json = r#"[{"name":"search","description":"Search","parameters":{"type":"object","properties":{}}}]"#;
-    let result = engine.run(&enc_ids, &[], tools_json);
+    let result = engine.run("Find something", tools_json);
 
     // Verify no NaN in output (would indicate bad weight layout)
     let all_valid = result.token_ids.iter().all(|&t| t < 8192);
     assert!(all_valid, "decoder produced out-of-range token ID — likely NaN in logits");
     eprintln!("encoder hidden states: valid (no NaN/OOB token IDs)");
+    eprintln!("output: {:?}", result.text);
 }
 
 /// Logit sanity check: with real weights the first token predicted should be

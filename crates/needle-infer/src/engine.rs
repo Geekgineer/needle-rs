@@ -52,16 +52,17 @@ impl NeedleEngine {
     }
 
     /// Run single-example inference.
-    /// `query`: raw query string
-    /// `tools_json`: JSON string of tool definitions array
-    pub fn run(&self, query_ids: &[u32], tools_ids: &[u32], tools_json: &str) -> InferenceResult {
-        // Build encoder input: [query_tokens..., tools_id(5), tools_tokens...]
-        let mut enc_input = Vec::with_capacity(
-            query_ids.len() + 1 + tools_ids.len()
-        );
-        enc_input.extend_from_slice(query_ids);
+    /// `query`:      raw query string (tokenized internally)
+    /// `tools_json`: JSON string of tool definitions array (tokenized internally)
+    pub fn run(&self, query: &str, tools_json: &str) -> InferenceResult {
+        // Tokenize: encode(query) + [TOOLS_ID] + encode(tools_json)
+        let query_ids = self.vocab.encode(query);
+        let tools_ids = self.vocab.encode(tools_json);
+
+        let mut enc_input = Vec::with_capacity(query_ids.len() + 1 + tools_ids.len());
+        enc_input.extend_from_slice(&query_ids);
         enc_input.push(TOOLS_ID as u32);
-        enc_input.extend_from_slice(tools_ids);
+        enc_input.extend_from_slice(&tools_ids);
 
         // Truncate to max_enc_len
         let max_enc = self.model.cfg.max_enc_len;

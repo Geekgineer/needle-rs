@@ -27,11 +27,6 @@ fn main() {
         }
     };
 
-    // TODO: proper tokenization via sentencepiece; for now use space-split placeholder
-    // (full tokenizer integration happens once we have the exported vocab file)
-    let query_ids: Vec<u32> = vec![needle_infer::tokenizer::BOS_ID];
-    let tools_token_ids: Vec<u32> = vec![];
-
-    let result = engine.run(&query_ids, &tools_token_ids, tools_json);
+    let result = engine.run(query, tools_json);
     println!("{}", result.text);
 }
