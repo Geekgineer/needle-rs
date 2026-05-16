@@ -1,0 +1,11 @@
+[package]
+name = "needle-infer"
+version.workspace = true
+edition.workspace = true
+description = "Needle inference engine: tokenizer, KV cache, constrained decoding, SafeTensors loader"
+
+[dependencies]
+needle-core = { path = "../needle-core" }
+
+[dev-dependencies]
+serde_json = "1"

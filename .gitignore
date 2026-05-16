@@ -1,0 +1,8 @@
+/target/
+weights/
+needle/checkpoints/
+*.pkl
+*.safetensors
+__pycache__/
+*.pyc
+.env

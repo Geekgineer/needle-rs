@@ -1,0 +1,14 @@
+[package]
+name = "needle-wasm"
+version.workspace = true
+edition.workspace = true
+description = "WASM bindings for Needle (browser, Cloudflare Workers, Node.js)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+needle-infer = { path = "../needle-infer" }
+needle-core = { path = "../needle-core" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]

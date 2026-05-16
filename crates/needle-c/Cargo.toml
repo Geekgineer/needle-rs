@@ -1,0 +1,12 @@
+[package]
+name = "needle-c"
+version.workspace = true
+edition.workspace = true
+description = "C ABI shared library for Needle (FFI, Python, Go, Swift, etc.)"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+needle-infer = { path = "../needle-infer" }
+needle-core = { path = "../needle-core", features = ["std"] }

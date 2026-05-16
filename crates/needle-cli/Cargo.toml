@@ -1,0 +1,13 @@
+[package]
+name = "needle-cli"
+version.workspace = true
+edition.workspace = true
+description = "Needle command-line inference tool"
+
+[[bin]]
+name = "needle-rs"
+path = "src/main.rs"
+
+[dependencies]
+needle-infer = { path = "../needle-infer" }
+needle-core = { path = "../needle-core", features = ["std"] }
