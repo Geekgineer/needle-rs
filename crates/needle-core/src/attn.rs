@@ -51,7 +51,9 @@ impl KvCache {
     }
 
     pub fn push_kv(&mut self, k_vec: &[f32], v_vec: &[f32]) {
-        debug_assert!(self.len < self.max_len);
+        if self.len >= self.max_len {
+            return;
+        }
         let stride = self.kv_stride();
         let base = self.len * stride;
         self.k[base..base + stride].copy_from_slice(k_vec);

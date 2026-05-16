@@ -75,12 +75,22 @@ impl NeedleModel {
 
     /// Compute logits over vocabulary for a hidden vector.
     /// Uses tied embedding (LM head = embedding^T).
+    /// Dispatches to AVX2 path when compiled with `simd` feature on x86_64+avx2.
     fn lm_head(&self, hidden: &[f32], logits: &mut [f32]) {
+        debug_assert_eq!(hidden.len(), self.cfg.d_model);
+        debug_assert_eq!(logits.len(), self.cfg.vocab_size);
+
+        #[cfg(all(target_arch = "x86_64", feature = "simd", target_feature = "avx2"))]
+        // Safety: cfg guard ensures AVX2 is available at compile time.
+        return unsafe { self.lm_head_avx2(hidden, logits) };
+
+        #[allow(unreachable_code)]
+        self.lm_head_scalar(hidden, logits);
+    }
+
+    fn lm_head_scalar(&self, hidden: &[f32], logits: &mut [f32]) {
         let d = self.cfg.d_model;
         let v = self.cfg.vocab_size;
-        debug_assert_eq!(hidden.len(), d);
-        debug_assert_eq!(logits.len(), v);
-
         for tok in 0..v {
             let emb = &self.embedding[tok * d..(tok + 1) * d];
             let mut acc = 0.0f32;
@@ -88,6 +98,39 @@ impl NeedleModel {
                 acc += hidden[i] * emb[i];
             }
             logits[tok] = acc;
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+    #[target_feature(enable = "avx2")]
+    unsafe fn lm_head_avx2(&self, hidden: &[f32], logits: &mut [f32]) {
+        use core::arch::x86_64::*;
+        let d = self.cfg.d_model;
+        let v = self.cfg.vocab_size;
+        let chunks = d / 8;
+
+        for tok in 0..v {
+            let emb_ptr = self.embedding.as_ptr().add(tok * d);
+            let mut acc = _mm256_setzero_ps();
+            for c in 0..chunks {
+                let h = _mm256_loadu_ps(hidden.as_ptr().add(c * 8));
+                let e = _mm256_loadu_ps(emb_ptr.add(c * 8));
+                acc = _mm256_fmadd_ps(h, e, acc);
+            }
+            // Horizontal sum: reduce 8 lanes → 1 scalar
+            let hi128 = _mm256_extractf128_ps(acc, 1);
+            let lo128 = _mm256_castps256_ps128(acc);
+            let sum128 = _mm_add_ps(hi128, lo128);
+            let shuf = _mm_shuffle_ps(sum128, sum128, 0x4E);
+            let sum64 = _mm_add_ps(sum128, shuf);
+            let shuf2 = _mm_shuffle_ps(sum64, sum64, 0xB1);
+            let sum32 = _mm_add_ss(sum64, shuf2);
+            let mut result = _mm_cvtss_f32(sum32);
+            // Scalar tail for d not divisible by 8
+            for i in chunks * 8..d {
+                result += hidden[i] * *emb_ptr.add(i);
+            }
+            logits[tok] = result;
         }
     }
 
@@ -108,10 +151,11 @@ impl NeedleModel {
         }
 
         let mut tmp = Vec::with_capacity(seq_len * d);
+        let mut normed = vec![0.0f32; seq_len * d]; // pre-allocated scratch, reused across layers
 
         // Run encoder layers (self-attn only, no KV cache written here)
         for layer in self.encoder_layers.iter() {
-            encoder_layer_forward(&mut x, layer, &self.attn_cfg, &self.rope, seq_len, None, &mut tmp);
+            encoder_layer_forward(&mut x, layer, &self.attn_cfg, &self.rope, seq_len, None, &mut tmp, &mut normed);
         }
 
         // Encoder final norm
@@ -178,6 +222,7 @@ impl NeedleModel {
         // Embed + scale
         let mut x: Vec<f32> = self.embed_scaled(token_id);
         let mut tmp = Vec::with_capacity(d);
+        let mut normed = vec![0.0f32; d]; // pre-allocated scratch, reused across layers
 
         for (li, layer) in self.decoder_layers.iter().enumerate() {
             decoder_layer_forward(
@@ -188,6 +233,7 @@ impl NeedleModel {
                 &enc_kv_caches[li],
                 &mut dec_kv_caches[li],
                 &mut tmp,
+                &mut normed,
             );
         }
 

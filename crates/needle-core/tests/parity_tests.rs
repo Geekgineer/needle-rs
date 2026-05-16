@@ -13,7 +13,7 @@ use needle_core::quant::QuantizedWeight;
 use needle_core::config::TransformerConfig;
 use needle_core::model::NeedleModel;
 use needle_core::layers::{EncoderLayer, DecoderLayer};
-use needle_core::attn::AttnWeights;
+use needle_core::attn::{AttnWeights, KvCache};
 
 const TOL: f32 = 1e-5;
 
@@ -139,6 +139,32 @@ fn test_rope_pos1_head_dim4() {
         4.0 * c1 + 2.0 * s1,
     ];
     assert_close(&q, &want, "rope_pos1_head4");
+}
+
+// ── KV cache overflow — safety ───────────────────────────────────────────────
+
+/// KvCache must saturate at max_len without panicking.
+/// Excess push_kv calls are silently ignored; len never exceeds max_len.
+#[test]
+fn test_kv_cache_saturates_at_max_len() {
+    let max_len = 4;
+    let num_kv_heads = 2;
+    let head_dim = 8;
+    let stride = num_kv_heads * head_dim;
+
+    let mut cache = KvCache::new(max_len, num_kv_heads, head_dim);
+    let k: Vec<f32> = (0..stride).map(|i| i as f32).collect();
+    let v: Vec<f32> = (0..stride).map(|i| i as f32 * 2.0).collect();
+
+    for _ in 0..max_len {
+        cache.push_kv(&k, &v);
+    }
+    assert_eq!(cache.len, max_len, "cache should be full at max_len");
+
+    // These must not panic or corrupt state
+    cache.push_kv(&k, &v);
+    cache.push_kv(&k, &v);
+    assert_eq!(cache.len, max_len, "cache.len must not exceed max_len after overflow");
 }
 
 // ── Quantization — hardcoded ─────────────────────────────────────────────────
@@ -540,4 +566,44 @@ fn test_full_forward_logits_close() {
         );
     }
     eprintln!("max logit diff (Rust INT4 vs Python f32): {max_diff:.6}");
+}
+
+/// Non-power-of-2 in_feat: quantize pads to the next GROUP_SIZE multiple.
+/// Verifies that matvec matches dequantize+naive-dot for in_feat=33 (→64) and in_feat=65 (→96).
+#[test]
+fn test_quant_nonaligned_infeats() {
+    for &(in_feat, out_feat) in &[(33usize, 8usize), (65, 16)] {
+        let w: Vec<f32> = (0..in_feat * out_feat)
+            .map(|i| (i as f32) * 0.13 - 4.0)
+            .collect();
+
+        let qw = QuantizedWeight::quantize(&w, in_feat, out_feat);
+
+        // Dequantize to f32 and check matvec matches naive dot
+        let mut dq = vec![0.0f32; in_feat * out_feat];
+        qw.dequantize_to(&mut dq);
+
+        let x: Vec<f32> = (0..in_feat).map(|i| ((i as f32) * 0.1).sin()).collect();
+
+        let mut y_ref = vec![0.0f32; out_feat];
+        for o in 0..out_feat {
+            for i in 0..in_feat {
+                y_ref[o] += x[i] * dq[i * out_feat + o];
+            }
+        }
+
+        let mut y_got = vec![0.0f32; out_feat];
+        qw.matvec(&x, &mut y_got);
+
+        for o in 0..out_feat {
+            let diff = (y_got[o] - y_ref[o]).abs();
+            let tol = 1e-3 * y_ref[o].abs().max(1.0);
+            assert!(
+                diff < tol,
+                "in_feat={in_feat} matvec[{o}]: got={:.6} ref={:.6} diff={diff:.6} tol={tol:.6}",
+                y_got[o], y_ref[o]
+            );
+        }
+        eprintln!("nonaligned in_feat={in_feat} out_feat={out_feat}: OK");
+    }
 }
