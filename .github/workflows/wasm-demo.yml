@@ -69,4 +69,4 @@ jobs:
           preCommands: >
             npx wrangler pages project create needle-rs
             --production-branch=main 2>/dev/null || true
-          command: pages deploy _site --project-name=needle-rs --commit-dirty=true
+          command: pages deploy _site --project-name=needle-rs --branch=main --commit-dirty=true
