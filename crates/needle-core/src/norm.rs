@@ -23,7 +23,7 @@ pub fn zc_rms_norm(x: &mut [f32], scale: &[f32], d_model: usize) {
 pub fn zc_rms_norm_vec(x: &mut [f32], scale: &[f32]) {
     debug_assert_eq!(x.len(), scale.len());
     let mean_sq = x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32;
-    let inv = 1.0 / math::sqrt(mean_sq + EPS);  // eps inside sqrt — matches Python
+    let inv = 1.0 / math::sqrt(mean_sq + EPS); // eps inside sqrt — matches Python
     for (xi, &si) in x.iter_mut().zip(scale.iter()) {
         *xi = (1.0 + si) * (*xi) * inv;
     }

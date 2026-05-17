@@ -6,20 +6,24 @@
 //! Encoder block: self-attn only (no FFN by default).
 //! Decoder block: self-attn → cross-attn → optional FFN.
 
-use alloc::vec::Vec;
-use crate::attn::{AttnWeights, AttnConfig, KvCache, self_attn_full, self_attn_incremental, cross_attn_incremental};
-use crate::ffn::{FfnWeights, ffn_forward};
+use crate::attn::{
+    cross_attn_incremental, self_attn_full, self_attn_incremental, AttnConfig, AttnWeights, KvCache,
+};
+use crate::config::FfnActivation;
+use crate::ffn::{ffn_forward, FfnWeights};
 use crate::norm::zc_rms_norm_vec;
-use crate::rope::RopeCache;
 use crate::ops::sigmoid;
+use crate::rope::RopeCache;
+use alloc::vec::Vec;
 
 pub struct EncoderLayer {
     pub self_attn: AttnWeights,
-    pub self_attn_gate: f32,   // scalar sigmoid gate
-    pub norm: Vec<f32>,        // ZCRMSNorm scale [d_model]
+    pub self_attn_gate: f32, // scalar sigmoid gate
+    pub norm: Vec<f32>,      // ZCRMSNorm scale [d_model]
     pub ffn: Option<FfnWeights>,
     pub ffn_gate: f32,
     pub ffn_norm: Option<Vec<f32>>,
+    pub ffn_activation: Option<FfnActivation>,
 }
 
 pub struct DecoderLayer {
@@ -32,11 +36,13 @@ pub struct DecoderLayer {
     pub ffn: Option<FfnWeights>,
     pub ffn_gate: f32,
     pub ffn_norm: Option<Vec<f32>>,
+    pub ffn_activation: Option<FfnActivation>,
 }
 
 /// Run a single encoder layer on the full sequence.
 /// `x`:      [seq_len, d_model] — modified in-place
 /// `normed`: scratch buffer [seq_len, d_model] — pre-allocated by caller, reused across layers
+#[allow(clippy::too_many_arguments)]
 pub fn encoder_layer_forward(
     x: &mut [f32],
     layer: &EncoderLayer,
@@ -67,14 +73,16 @@ pub fn encoder_layer_forward(
     }
 
     // Optional FFN
-    if let (Some(ffn), Some(ffn_norm)) = (&layer.ffn, &layer.ffn_norm) {
-        let d_ff = ffn.w1.out_feat;
+    if let (Some(ffn), Some(ffn_norm), Some(activation)) =
+        (&layer.ffn, &layer.ffn_norm, &layer.ffn_activation)
+    {
+        let d_ff = ffn.gate_proj.out_feat;
         for t in 0..seq_len {
             let row = &mut x[t * d..(t + 1) * d];
             let mut normed_row = row.to_vec();
             zc_rms_norm_vec(&mut normed_row, ffn_norm);
             tmp.resize(d, 0.0);
-            ffn_forward(&normed_row, tmp, ffn, d_ff);
+            ffn_forward(&normed_row, tmp, ffn, d_ff, activation);
             let ffn_gate = sigmoid(layer.ffn_gate);
             for (xi, &ti) in row.iter_mut().zip(tmp.iter()) {
                 *xi += ffn_gate * ti;
@@ -88,8 +96,9 @@ pub fn encoder_layer_forward(
 /// `enc_kv`: precomputed encoder KV (for cross-attn)
 /// `dec_kv_self`: decoder self-attn KV cache (appended to here)
 /// `normed`: scratch buffer [d_model] — pre-allocated by caller, reused for self-attn/cross-attn/ffn
+#[allow(clippy::too_many_arguments)]
 pub fn decoder_layer_forward(
-    x: &mut Vec<f32>,
+    x: &mut [f32],
     layer: &DecoderLayer,
     cfg: &AttnConfig,
     rope: &RopeCache,
@@ -124,12 +133,14 @@ pub fn decoder_layer_forward(
     }
 
     // --- Optional FFN (reuse normed buffer) ---
-    if let (Some(ffn), Some(ffn_norm)) = (&layer.ffn, &layer.ffn_norm) {
-        let d_ff = ffn.w1.out_feat;
+    if let (Some(ffn), Some(ffn_norm), Some(activation)) =
+        (&layer.ffn, &layer.ffn_norm, &layer.ffn_activation)
+    {
+        let d_ff = ffn.gate_proj.out_feat;
         normed.copy_from_slice(x);
         zc_rms_norm_vec(normed, ffn_norm);
         tmp.resize(d, 0.0);
-        ffn_forward(normed, tmp, ffn, d_ff);
+        ffn_forward(normed, tmp, ffn, d_ff, activation);
         let ffn_gate = sigmoid(layer.ffn_gate);
         for (xi, &ti) in x.iter_mut().zip(tmp.iter()) {
             *xi += ffn_gate * ti;

@@ -7,13 +7,13 @@
 //! Run all:  cargo test -p needle-core
 //! Run one:  cargo test -p needle-core test_zc_rms_norm
 
-use needle_core::norm::zc_rms_norm_vec;
-use needle_core::rope::RopeCache;
-use needle_core::quant::QuantizedWeight;
-use needle_core::config::TransformerConfig;
-use needle_core::model::NeedleModel;
-use needle_core::layers::{EncoderLayer, DecoderLayer};
 use needle_core::attn::{AttnWeights, KvCache};
+use needle_core::config::TransformerConfig;
+use needle_core::layers::{DecoderLayer, EncoderLayer};
+use needle_core::model::NeedleModel;
+use needle_core::norm::zc_rms_norm_vec;
+use needle_core::quant::QuantizedWeight;
+use needle_core::rope::RopeCache;
 
 const TOL: f32 = 1e-5;
 
@@ -35,7 +35,9 @@ fn load_vectors() -> Option<serde_json::Value> {
 }
 
 fn json_f32_vec(v: &serde_json::Value) -> Vec<f32> {
-    v.as_array().unwrap().iter()
+    v.as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_f64().unwrap() as f32)
         .collect()
 }
@@ -82,7 +84,9 @@ fn test_zc_rms_norm_nonzero_scale() {
 
     let mean_sq: f32 = x_in.iter().map(|v| v * v).sum::<f32>() / 4.0;
     let inv = 1.0 / (mean_sq + 1e-6f32).sqrt();
-    let want: Vec<f32> = x_in.iter().zip(scale.iter())
+    let want: Vec<f32> = x_in
+        .iter()
+        .zip(scale.iter())
         .map(|(&v, &s)| (1.0 + s) * v * inv)
         .collect();
 
@@ -104,7 +108,10 @@ fn test_zc_rms_norm_eps_inside_sqrt() {
     zc_rms_norm_vec(&mut x, &scale);
     assert_close(&x, &want, "eps_inside_sqrt");
 
-    assert!(x[0] < 1.0, "eps must be inside sqrt — output should be ~0.1, not ~9.9");
+    assert!(
+        x[0] < 1.0,
+        "eps must be inside sqrt — output should be ~0.1, not ~9.9"
+    );
 }
 
 // ── RoPE — hardcoded ─────────────────────────────────────────────────────────
@@ -164,7 +171,10 @@ fn test_kv_cache_saturates_at_max_len() {
     // These must not panic or corrupt state
     cache.push_kv(&k, &v);
     cache.push_kv(&k, &v);
-    assert_eq!(cache.len, max_len, "cache.len must not exceed max_len after overflow");
+    assert_eq!(
+        cache.len, max_len,
+        "cache.len must not exceed max_len after overflow"
+    );
 }
 
 // ── Quantization — hardcoded ─────────────────────────────────────────────────
@@ -256,7 +266,7 @@ fn model_from_json(v: &serde_json::Value) -> NeedleModel {
     let num_enc = v["config"]["num_encoder_layers"].as_u64().unwrap() as usize;
     let num_dec = v["config"]["num_decoder_layers"].as_u64().unwrap() as usize;
     let hd = d / h;
-    let q_dim = h * hd;   // = d_model for our config
+    let q_dim = h * hd; // = d_model for our config
     let kv_dim = kv_h * hd;
 
     let cfg = TransformerConfig {
@@ -288,7 +298,10 @@ fn model_from_json(v: &serde_json::Value) -> NeedleModel {
         }
     }
 
-    let encoder_layers: Vec<EncoderLayer> = w["encoder_layers"].as_array().unwrap().iter()
+    let encoder_layers: Vec<EncoderLayer> = w["encoder_layers"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|l| EncoderLayer {
             self_attn: load_attn(&l["self_attn"], d, q_dim, kv_dim),
             self_attn_gate: l["self_attn_gate"].as_f64().unwrap() as f32,
@@ -296,10 +309,14 @@ fn model_from_json(v: &serde_json::Value) -> NeedleModel {
             ffn: None,
             ffn_gate: 0.0,
             ffn_norm: None,
+            ffn_activation: None,
         })
         .collect();
 
-    let decoder_layers: Vec<DecoderLayer> = w["decoder_layers"].as_array().unwrap().iter()
+    let decoder_layers: Vec<DecoderLayer> = w["decoder_layers"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|l| DecoderLayer {
             self_attn: load_attn(&l["self_attn"], d, q_dim, kv_dim),
             self_attn_gate: l["self_attn_gate"].as_f64().unwrap() as f32,
@@ -310,10 +327,18 @@ fn model_from_json(v: &serde_json::Value) -> NeedleModel {
             ffn: None,
             ffn_gate: 0.0,
             ffn_norm: None,
+            ffn_activation: None,
         })
         .collect();
 
-    NeedleModel::new(cfg, embedding, encoder_layers, decoder_layers, encoder_final_norm, decoder_final_norm)
+    NeedleModel::new(
+        cfg,
+        embedding,
+        encoder_layers,
+        decoder_layers,
+        encoder_final_norm,
+        decoder_final_norm,
+    )
 }
 
 #[test]
@@ -321,7 +346,10 @@ fn test_full_forward_pred_token() {
     let Some(v) = load_vectors() else { return };
 
     let want_pred = v["forward"]["pred_token"].as_u64().unwrap() as u32;
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["inputs"]["dec_start_id"].as_u64().unwrap() as u32;
@@ -338,7 +366,9 @@ fn test_full_forward_pred_token() {
     let mut logits = vec![0.0f32; vocab];
     model.decode_step(dec_start, &enc_kv, &mut dec_kv, &mut logits);
 
-    let got_pred = logits.iter().enumerate()
+    let got_pred = logits
+        .iter()
+        .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i as u32)
         .unwrap();
@@ -368,10 +398,15 @@ fn test_full_forward_pred_token() {
 #[test]
 fn test_full_forward_pred_token_exact() {
     let Some(v) = load_vectors() else { return };
-    let Some(ptq) = v["forward"].get("pred_token_q") else { return };
+    let Some(ptq) = v["forward"].get("pred_token_q") else {
+        return;
+    };
     let want_pred = ptq.as_u64().unwrap() as u32;
 
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["inputs"]["dec_start_id"].as_u64().unwrap() as u32;
@@ -387,7 +422,9 @@ fn test_full_forward_pred_token_exact() {
     let mut logits = vec![0.0f32; vocab];
     model.decode_step(dec_start, &enc_kv, &mut dec_kv, &mut logits);
 
-    let got_pred = logits.iter().enumerate()
+    let got_pred = logits
+        .iter()
+        .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i as u32)
         .unwrap();
@@ -404,10 +441,15 @@ fn test_full_forward_pred_token_exact() {
 #[test]
 fn test_full_forward_logits_quant_close() {
     let Some(v) = load_vectors() else { return };
-    let Some(lq) = v["forward"].get("logits_q") else { return };
+    let Some(lq) = v["forward"].get("logits_q") else {
+        return;
+    };
 
     let want_logits = json_f32_vec(lq);
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["inputs"]["dec_start_id"].as_u64().unwrap() as u32;
@@ -428,7 +470,9 @@ fn test_full_forward_logits_quant_close() {
     let mut max_diff = 0.0f32;
     for (i, (got, want)) in got_logits.iter().zip(want_logits.iter()).enumerate() {
         let diff = (got - want).abs();
-        if diff > max_diff { max_diff = diff; }
+        if diff > max_diff {
+            max_diff = diff;
+        }
         assert!(
             diff < tol,
             "logit_q[{i}]: Rust={got:.6} Python-INT4={want:.6} diff={diff:.6} > {tol}"
@@ -443,10 +487,15 @@ fn test_full_forward_logits_quant_close() {
 #[test]
 fn test_encoder_hidden_parity() {
     let Some(v) = load_vectors() else { return };
-    let Some(eq) = v["forward"].get("enc_out_q") else { return };
+    let Some(eq) = v["forward"].get("enc_out_q") else {
+        return;
+    };
 
     let want: Vec<f32> = json_f32_flat(eq);
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
 
@@ -461,7 +510,9 @@ fn test_encoder_hidden_parity() {
     let mut max_diff = 0.0f32;
     for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
         let diff = (g - w).abs();
-        if diff > max_diff { max_diff = diff; }
+        if diff > max_diff {
+            max_diff = diff;
+        }
         assert!(
             diff < tol,
             "enc_out_q[{i}]: Rust={g:.6} Python={w:.6} diff={diff:.6} > tol={tol}"
@@ -478,9 +529,14 @@ fn test_encoder_hidden_parity() {
 #[test]
 fn test_multi_step_decode_parity() {
     let Some(v) = load_vectors() else { return };
-    let Some(ms) = v.get("multi_step") else { return };
+    let Some(ms) = v.get("multi_step") else {
+        return;
+    };
 
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["inputs"]["dec_start_id"].as_u64().unwrap() as u32;
@@ -499,14 +555,19 @@ fn test_multi_step_decode_parity() {
     for (step_i, step) in steps.iter().enumerate() {
         let want_pred = step["pred_token"].as_u64().unwrap() as u32;
         let margin = step["margin"].as_f64().unwrap() as f32;
-        let top5: Vec<u32> = step["top5_tokens"].as_array().unwrap().iter()
+        let top5: Vec<u32> = step["top5_tokens"]
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|n| n.as_u64().unwrap() as u32)
             .collect();
 
         let mut logits = vec![0.0f32; vocab];
         model.decode_step(current_token, &enc_kv, &mut dec_kv, &mut logits);
 
-        let got_pred = logits.iter().enumerate()
+        let got_pred = logits
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i as u32)
             .unwrap();
@@ -536,7 +597,10 @@ fn test_full_forward_logits_close() {
     let Some(v) = load_vectors() else { return };
 
     let want_logits = json_f32_vec(&v["forward"]["logits"]);
-    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["inputs"]["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["inputs"]["dec_start_id"].as_u64().unwrap() as u32;
@@ -559,7 +623,9 @@ fn test_full_forward_logits_close() {
     let mut max_diff = 0.0f32;
     for (i, (got, want)) in got_logits.iter().zip(want_logits.iter()).enumerate() {
         let diff = (got - want).abs();
-        if diff > max_diff { max_diff = diff; }
+        if diff > max_diff {
+            max_diff = diff;
+        }
         assert!(
             diff < int4_tol,
             "logit[{i}]: Rust={got:.6} Python={want:.6} diff={diff:.4} > tol={int4_tol}"
@@ -601,9 +667,41 @@ fn test_quant_nonaligned_infeats() {
             assert!(
                 diff < tol,
                 "in_feat={in_feat} matvec[{o}]: got={:.6} ref={:.6} diff={diff:.6} tol={tol:.6}",
-                y_got[o], y_ref[o]
+                y_got[o],
+                y_ref[o]
             );
         }
         eprintln!("nonaligned in_feat={in_feat} out_feat={out_feat}: OK");
     }
+}
+
+#[test]
+fn test_config_validate_rejects_bad_head_divisibility() {
+    let mut cfg = TransformerConfig::default();
+    // Default is valid
+    assert!(cfg.validate().is_ok(), "default config must be valid");
+
+    // d_model not divisible by num_heads → silent wrong head_dim
+    cfg.d_model = 513; // 513 % 8 != 0
+    assert!(
+        cfg.validate().is_err(),
+        "d_model=513, num_heads=8 must fail"
+    );
+
+    // num_heads not divisible by num_kv_heads
+    cfg.d_model = 512;
+    cfg.num_kv_heads = 3; // 8 % 3 != 0
+    assert!(
+        cfg.validate().is_err(),
+        "num_heads=8, num_kv_heads=3 must fail"
+    );
+
+    assert!(
+        TransformerConfig { num_heads: 0, ..Default::default() }.validate().is_err(),
+        "num_heads=0 must fail"
+    );
+    assert!(
+        TransformerConfig { vocab_size: 0, ..Default::default() }.validate().is_err(),
+        "vocab_size=0 must fail"
+    );
 }

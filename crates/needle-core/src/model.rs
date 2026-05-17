@@ -8,14 +8,14 @@
 //!   Decoder start: [eos_id(1)]
 //!   Decoder output: <tool_call>(4) then JSON
 
-use alloc::vec::Vec;
-use alloc::vec;
-use crate::config::TransformerConfig;
 use crate::attn::{AttnConfig, KvCache};
-use crate::layers::{EncoderLayer, DecoderLayer, encoder_layer_forward, decoder_layer_forward};
-use crate::rope::RopeCache;
-use crate::norm::zc_rms_norm_vec;
+use crate::config::TransformerConfig;
+use crate::layers::{decoder_layer_forward, encoder_layer_forward, DecoderLayer, EncoderLayer};
 use crate::math;
+use crate::norm::zc_rms_norm_vec;
+use crate::rope::RopeCache;
+use alloc::vec;
+use alloc::vec::Vec;
 
 pub struct NeedleModel {
     pub cfg: TransformerConfig,
@@ -52,7 +52,7 @@ impl NeedleModel {
         let rope = RopeCache::new(
             cfg.max_enc_len.max(cfg.max_dec_len),
             cfg.head_dim(),
-            10000.0,
+            cfg.rope_theta,
         );
         let attn_cfg = AttnConfig {
             num_heads: cfg.num_heads,
@@ -61,7 +61,17 @@ impl NeedleModel {
             d_model: cfg.d_model,
         };
         let embed_scale = math::sqrt(cfg.d_model as f32);
-        Self { cfg, embedding, encoder_layers, decoder_layers, encoder_final_norm, decoder_final_norm, rope, attn_cfg, embed_scale }
+        Self {
+            cfg,
+            embedding,
+            encoder_layers,
+            decoder_layers,
+            encoder_final_norm,
+            decoder_final_norm,
+            rope,
+            attn_cfg,
+            embed_scale,
+        }
     }
 
     /// Embed a token and apply embedding scale: returns owned Vec.
@@ -75,19 +85,21 @@ impl NeedleModel {
 
     /// Compute logits over vocabulary for a hidden vector.
     /// Uses tied embedding (LM head = embedding^T).
-    /// Dispatches to AVX2 path when compiled with `simd` feature on x86_64+avx2.
+    /// Dispatches to AVX2 path at runtime via CPUID (matches quant.rs dispatch pattern).
     fn lm_head(&self, hidden: &[f32], logits: &mut [f32]) {
         debug_assert_eq!(hidden.len(), self.cfg.d_model);
         debug_assert_eq!(logits.len(), self.cfg.vocab_size);
 
-        #[cfg(all(target_arch = "x86_64", feature = "simd", target_feature = "avx2"))]
-        // Safety: cfg guard ensures AVX2 is available at compile time.
-        return unsafe { self.lm_head_avx2(hidden, logits) };
+        #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+        if crate::quant::has_avx2() {
+            // Safety: has_avx2() confirmed AVX2 via CPUID before this call.
+            return unsafe { self.lm_head_avx2(hidden, logits) };
+        }
 
-        #[allow(unreachable_code)]
         self.lm_head_scalar(hidden, logits);
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn lm_head_scalar(&self, hidden: &[f32], logits: &mut [f32]) {
         let d = self.cfg.d_model;
         let v = self.cfg.vocab_size;
@@ -103,6 +115,7 @@ impl NeedleModel {
 
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     #[target_feature(enable = "avx2")]
+    #[allow(clippy::needless_range_loop)]
     unsafe fn lm_head_avx2(&self, hidden: &[f32], logits: &mut [f32]) {
         use core::arch::x86_64::*;
         let d = self.cfg.d_model;
@@ -137,7 +150,7 @@ impl NeedleModel {
     /// Run the encoder over the full input sequence.
     /// Returns encoder hidden states [enc_len, d_model].
     /// Also fills enc_kv_caches (one per decoder layer) with cross-attn K/V projections.
-    pub fn encode(&self, input_ids: &[u32], enc_kv_caches: &mut Vec<KvCache>) -> Vec<f32> {
+    pub fn encode(&self, input_ids: &[u32], enc_kv_caches: &mut [KvCache]) -> Vec<f32> {
         let seq_len = input_ids.len();
         let d = self.cfg.d_model;
 
@@ -155,7 +168,16 @@ impl NeedleModel {
 
         // Run encoder layers (self-attn only, no KV cache written here)
         for layer in self.encoder_layers.iter() {
-            encoder_layer_forward(&mut x, layer, &self.attn_cfg, &self.rope, seq_len, None, &mut tmp, &mut normed);
+            encoder_layer_forward(
+                &mut x,
+                layer,
+                &self.attn_cfg,
+                &self.rope,
+                seq_len,
+                None,
+                &mut tmp,
+                &mut normed,
+            );
         }
 
         // Encoder final norm
@@ -171,7 +193,7 @@ impl NeedleModel {
 
     /// Project encoder hidden states into K/V for each decoder layer's cross-attn.
     /// No RoPE applied (Python passes rope=None to cross-attention).
-    fn fill_cross_kv(&self, enc_hidden: &[f32], seq_len: usize, kv_caches: &mut Vec<KvCache>) {
+    fn fill_cross_kv(&self, enc_hidden: &[f32], seq_len: usize, kv_caches: &mut [KvCache]) {
         let kv_h = self.cfg.num_kv_heads;
         let hd = self.cfg.head_dim();
         let kv_dim = kv_h * hd;
@@ -213,8 +235,8 @@ impl NeedleModel {
     pub fn decode_step(
         &self,
         token_id: u32,
-        enc_kv_caches: &Vec<KvCache>,
-        dec_kv_caches: &mut Vec<KvCache>,
+        enc_kv_caches: &[KvCache],
+        dec_kv_caches: &mut [KvCache],
         logits: &mut [f32],
     ) {
         let d = self.cfg.d_model;
@@ -252,7 +274,13 @@ impl NeedleModel {
     /// Allocate fresh KV caches for decoder self-attention.
     pub fn make_dec_kv_caches(&self) -> Vec<KvCache> {
         (0..self.cfg.num_dec_layers)
-            .map(|_| KvCache::new(self.cfg.max_dec_len, self.cfg.num_kv_heads, self.cfg.head_dim()))
+            .map(|_| {
+                KvCache::new(
+                    self.cfg.max_dec_len,
+                    self.cfg.num_kv_heads,
+                    self.cfg.head_dim(),
+                )
+            })
             .collect()
     }
 }

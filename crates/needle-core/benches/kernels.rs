@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use needle_core::quant::QuantizedWeight;
 use needle_core::norm::zc_rms_norm_vec;
+use needle_core::quant::QuantizedWeight;
 use needle_core::rope::RopeCache;
 
 // ── QuantizedWeight::matvec ───────────────────────────────────────────────────
@@ -10,11 +10,11 @@ fn bench_matvec(c: &mut Criterion) {
 
     // Production-size projections: (in, out)
     let shapes: &[(usize, usize, &str)] = &[
-        (512, 512,  "512x512"),    // Q/K/V proj, d=512
-        (512, 256,  "512x256"),    // K/V with num_kv_heads=4, head_dim=64
-        (2048, 512, "2048x512"),   // FFN down-proj (d_ff=2048, d=512)
-        (512, 2048, "512x2048"),   // FFN up-proj
-        (16, 16,    "16x16"),      // tiny test config baseline
+        (512, 512, "512x512"),   // Q/K/V proj, d=512
+        (512, 256, "512x256"),   // K/V with num_kv_heads=4, head_dim=64
+        (2048, 512, "2048x512"), // FFN down-proj (d_ff=2048, d=512)
+        (512, 2048, "512x2048"), // FFN up-proj
+        (16, 16, "16x16"),       // tiny test config baseline
     ];
 
     for &(in_feat, out_feat, label) in shapes {
@@ -121,5 +121,11 @@ fn bench_matmul(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_matvec, bench_rms_norm, bench_rope, bench_matmul);
+criterion_group!(
+    benches,
+    bench_matvec,
+    bench_rms_norm,
+    bench_rope,
+    bench_matmul
+);
 criterion_main!(benches);

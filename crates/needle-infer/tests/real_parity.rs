@@ -11,7 +11,10 @@
 
 use needle_infer::engine::NeedleEngine;
 
-const WEIGHTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../weights/needle.safetensors");
+const WEIGHTS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../weights/needle.safetensors"
+);
 const REAL_VECTORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/real_vectors.json");
 
 fn files_available() -> bool {
@@ -53,7 +56,10 @@ fn test_real_encoder_hidden_parity() {
     }
 
     let v = load_vectors().expect("real_vectors.json parse failed");
-    let enc_ids: Vec<u32> = v["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let want_enc: Vec<f32> = json_f32_flat(&v["enc_out_q"]);
@@ -64,14 +70,20 @@ fn test_real_encoder_hidden_parity() {
     let mut enc_kv = model.make_enc_kv_caches(enc_len);
     let got_enc = model.encode(&enc_ids, &mut enc_kv);
 
-    assert_eq!(got_enc.len(), want_enc.len(), "encoder hidden length mismatch");
+    assert_eq!(
+        got_enc.len(),
+        want_enc.len(),
+        "encoder hidden length mismatch"
+    );
 
     let tol = 1.0f32; // real model: d=512, 12 enc layers — more INT4 error accumulation
     let mut max_diff = 0.0f32;
     let mut n_outliers = 0usize;
     for (i, (g, w)) in got_enc.iter().zip(want_enc.iter()).enumerate() {
         let diff = (g - w).abs();
-        if diff > max_diff { max_diff = diff; }
+        if diff > max_diff {
+            max_diff = diff;
+        }
         if diff > tol {
             n_outliers += 1;
             if n_outliers <= 5 {
@@ -83,7 +95,10 @@ fn test_real_encoder_hidden_parity() {
         n_outliers == 0,
         "encoder parity: {n_outliers} elements exceed tol={tol}, max_diff={max_diff:.4}"
     );
-    eprintln!("real encoder hidden parity: max_diff={max_diff:.4} over {} elements", got_enc.len());
+    eprintln!(
+        "real encoder hidden parity: max_diff={max_diff:.4} over {} elements",
+        got_enc.len()
+    );
 }
 
 /// Multi-step decode parity with real 26M weights.
@@ -101,7 +116,10 @@ fn test_real_multi_step_decode_parity() {
     }
 
     let v = load_vectors().expect("real_vectors.json parse failed");
-    let enc_ids: Vec<u32> = v["enc_ids"].as_array().unwrap().iter()
+    let enc_ids: Vec<u32> = v["enc_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|n| n.as_u64().unwrap() as u32)
         .collect();
     let dec_start = v["dec_start"].as_u64().unwrap() as u32;
@@ -122,14 +140,19 @@ fn test_real_multi_step_decode_parity() {
     for (step_i, step) in steps.iter().enumerate() {
         let want_pred = step["pred_token"].as_u64().unwrap() as u32;
         let margin = step["margin"].as_f64().unwrap() as f32;
-        let top5: Vec<u32> = step["top5_tokens"].as_array().unwrap().iter()
+        let top5: Vec<u32> = step["top5_tokens"]
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|n| n.as_u64().unwrap() as u32)
             .collect();
 
         let mut logits = vec![0.0f32; vocab];
         model.decode_step(current_token, &enc_kv, &mut dec_kv, &mut logits);
 
-        let got_pred = logits.iter().enumerate()
+        let got_pred = logits
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i as u32)
             .unwrap_or(0);
@@ -142,8 +165,10 @@ fn test_real_multi_step_decode_parity() {
             "MISS"
         };
 
-        eprintln!("step {step_i}: input={current_token} Rust={got_pred} Python={want_pred} \
-                   margin={margin:.4} [{status}]");
+        eprintln!(
+            "step {step_i}: input={current_token} Rust={got_pred} Python={want_pred} \
+                   margin={margin:.4} [{status}]"
+        );
 
         if margin > 0.1 {
             if got_pred != want_pred {
@@ -155,15 +180,16 @@ fn test_real_multi_step_decode_parity() {
                 all_passed = false;
                 eprintln!("  FAIL: not in top-2 (margin={margin:.4})");
             }
-        } else {
-            if !top5.contains(&got_pred) {
-                all_passed = false;
-                eprintln!("  FAIL: not in top-5 (very tight margin={margin:.4})");
-            }
+        } else if !top5.contains(&got_pred) {
+            all_passed = false;
+            eprintln!("  FAIL: not in top-5 (very tight margin={margin:.4})");
         }
 
         current_token = got_pred;
     }
 
-    assert!(all_passed, "real model multi-step decode parity failed — see stderr for details");
+    assert!(
+        all_passed,
+        "real model multi-step decode parity failed — see stderr for details"
+    );
 }

@@ -6,8 +6,7 @@
 //! We support: F32, BF16, F16, I8, I4 (our custom packed format).
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -24,36 +23,49 @@ pub enum DType {
     BF16,
     F16,
     I8,
-    I4,     // custom: packed nibbles
+    I4, // custom: packed nibbles
 }
 
 pub struct SafeTensors {
     data: Vec<u8>,
     pub tensors: HashMap<String, TensorMeta>,
+    /// Flat string-to-string map from the `__metadata__` header entry.
+    pub metadata: HashMap<String, String>,
 }
 
 impl SafeTensors {
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let mut f = File::open(path)?;
+        let raw = std::fs::read(path)?;
+        Self::from_bytes(raw)
+    }
 
-        // Read 8-byte header length
-        let mut len_buf = [0u8; 8];
-        f.read_exact(&mut len_buf)?;
-        let header_len = u64::from_le_bytes(len_buf) as usize;
-
-        // Read JSON header
-        let mut header_bytes = vec![0u8; header_len];
-        f.read_exact(&mut header_bytes)?;
-        let header_str = std::str::from_utf8(&header_bytes)
+    /// Parse a SafeTensors buffer already in memory (e.g. from WASM/network).
+    pub fn from_bytes(raw: Vec<u8>) -> io::Result<Self> {
+        if raw.len() < 8 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "buffer too short",
+            ));
+        }
+        let header_len = u64::from_le_bytes(raw[..8].try_into().unwrap()) as usize;
+        let header_end = 8 + header_len;
+        if raw.len() < header_end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated header",
+            ));
+        }
+        let header_str = std::str::from_utf8(&raw[8..header_end])
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8 header"))?;
 
-        let tensors = parse_header(header_str)?;
+        let (tensors, metadata) = parse_header(header_str)?;
+        let data = raw[header_end..].to_vec();
 
-        // Read remainder (tensor data)
-        let mut data = Vec::new();
-        f.read_to_end(&mut data)?;
-
-        Ok(Self { data, tensors })
+        Ok(Self {
+            data,
+            tensors,
+            metadata,
+        })
     }
 
     /// Return tensor data as f32 slice, converting from stored dtype.
@@ -83,15 +95,23 @@ impl SafeTensors {
                 }
                 v
             }
-            DType::I8 => {
-                raw.iter().map(|&b| b as i8 as f32).collect()
-            }
+            DType::I8 => raw.iter().map(|&b| b as i8 as f32).collect(),
             DType::I4 => {
-                // Packed nibbles: 2 values per byte
-                let mut v = Vec::with_capacity(raw.len() * 2);
+                // Packed nibbles: 2 values per byte.
+                // Validate that the raw byte count matches the declared shape volume.
+                let expected_elems: usize = meta.shape.iter().product();
+                let actual_elems = raw.len() * 2;
+                if actual_elems != expected_elems {
+                    eprintln!(
+                        "[needle] I4 tensor shape mismatch: bytes*2={actual_elems} but shape={:?} (vol={expected_elems}); returning empty",
+                        meta.shape
+                    );
+                    return None;
+                }
+                let mut v = Vec::with_capacity(expected_elems);
                 for &byte in raw {
-                    let lo = (byte & 0x0F) as u8;
-                    let hi = (byte >> 4) as u8;
+                    let lo = byte & 0x0F;
+                    let hi = byte >> 4;
                     v.push(sign_extend4(lo) as f32);
                     v.push(sign_extend4(hi) as f32);
                 }
@@ -110,16 +130,24 @@ impl SafeTensors {
     pub fn meta(&self, name: &str) -> Option<&TensorMeta> {
         self.tensors.get(name)
     }
+
+    /// Look up a value from the `__metadata__` header entry.
+    pub fn get_metadata(&self, key: &str) -> Option<&str> {
+        self.metadata.get(key).map(|s| s.as_str())
+    }
 }
 
-fn parse_header(json: &str) -> io::Result<HashMap<String, TensorMeta>> {
+fn parse_header(json: &str) -> io::Result<(HashMap<String, TensorMeta>, HashMap<String, String>)> {
     let mut tensors = HashMap::new();
+    let mut metadata = HashMap::new();
 
     // Minimal JSON parser — SafeTensors header is a flat object with known structure.
-    // We don't want a full JSON library, so parse manually.
     let json = json.trim();
     if !json.starts_with('{') || !json.ends_with('}') {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "expected JSON object"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "expected JSON object",
+        ));
     }
 
     // Split on top-level '"key":' patterns
@@ -128,20 +156,33 @@ fn parse_header(json: &str) -> io::Result<HashMap<String, TensorMeta>> {
 
     for (key, val) in entries {
         if key == "__metadata__" {
+            metadata = parse_metadata_object(val);
             continue;
         }
         // val looks like: { "dtype": "BF16", "shape": [512, 512], "data_offsets": [0, 524288] }
         let dtype = extract_str_field(val, "dtype").ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("missing dtype for {key}"))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("missing dtype for {key}"),
+            )
         })?;
         let shape = extract_usize_array(val, "shape").ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("missing shape for {key}"))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("missing shape for {key}"),
+            )
         })?;
         let offsets = extract_usize_array(val, "data_offsets").ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("missing data_offsets for {key}"))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("missing data_offsets for {key}"),
+            )
         })?;
         if offsets.len() != 2 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "data_offsets must have 2 elements"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "data_offsets must have 2 elements",
+            ));
         }
 
         let dtype = match dtype {
@@ -150,18 +191,46 @@ fn parse_header(json: &str) -> io::Result<HashMap<String, TensorMeta>> {
             "F16" => DType::F16,
             "I8" => DType::I8,
             "I4" => DType::I4,
-            other => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown dtype {other}"))),
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown dtype {other}"),
+                ))
+            }
         };
 
-        tensors.insert(key.to_string(), TensorMeta {
-            dtype,
-            shape,
-            data_start: offsets[0],
-            data_end: offsets[1],
-        });
+        tensors.insert(
+            key.to_string(),
+            TensorMeta {
+                dtype,
+                shape,
+                data_start: offsets[0],
+                data_end: offsets[1],
+            },
+        );
     }
 
-    Ok(tensors)
+    Ok((tensors, metadata))
+}
+
+/// Parse `__metadata__` value `{"key":"value",...}` into a flat string map.
+fn parse_metadata_object(obj: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let obj = obj.trim();
+    if !obj.starts_with('{') || !obj.ends_with('}') {
+        return map;
+    }
+    let inner = &obj[1..obj.len() - 1];
+    for (key, val) in split_top_level_entries(inner) {
+        // val is either a quoted string `"value"` or unquoted
+        let value = if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
+            val[1..val.len() - 1].to_string()
+        } else {
+            val.to_string()
+        };
+        map.insert(key.to_string(), value);
+    }
+    map
 }
 
 /// Split a JSON object body into (key, value_str) pairs at the top level.
@@ -185,7 +254,14 @@ fn split_top_level_entries(s: &str) -> Vec<(&str, &str)> {
         }
         i += 1;
         let key_start = i;
-        while i < bytes.len() && bytes[i] != b'"' {
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                break;
+            }
             i += 1;
         }
         let key = &s[key_start..i];
@@ -195,12 +271,18 @@ fn split_top_level_entries(s: &str) -> Vec<(&str, &str)> {
         while i < bytes.len() && bytes[i] != b':' {
             i += 1;
         }
-        i += 1;
+        if i >= bytes.len() {
+            break;
+        } // malformed: no colon found
+        i += 1; // consume ':'
 
         // Skip whitespace
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
+        if i >= bytes.len() {
+            break;
+        } // malformed: nothing after colon
 
         // Read value (object or string)
         let val_start = i;
@@ -210,7 +292,14 @@ fn split_top_level_entries(s: &str) -> Vec<(&str, &str)> {
             &s[val_start..end + 1]
         } else if bytes[i] == b'"' {
             i += 1;
-            while i < bytes.len() && bytes[i] != b'"' {
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    break;
+                }
                 i += 1;
             }
             i += 1;
@@ -230,13 +319,13 @@ fn split_top_level_entries(s: &str) -> Vec<(&str, &str)> {
 
 fn find_matching_brace(s: &str, start: usize) -> usize {
     let bytes = s.as_bytes();
-    let mut depth = 0;
+    let mut depth: usize = 0;
     let mut i = start;
     while i < bytes.len() {
         match bytes[i] {
             b'{' | b'[' => depth += 1,
             b'}' | b']' => {
-                depth -= 1;
+                depth = depth.saturating_sub(1);
                 if depth == 0 {
                     return i;
                 }
@@ -254,8 +343,7 @@ fn extract_str_field<'a>(obj: &'a str, field: &str) -> Option<&'a str> {
     let after = &obj[pos + needle.len()..];
     let colon = after.find(':')? + 1;
     let after = after[colon..].trim_start();
-    if after.starts_with('"') {
-        let inner = &after[1..];
+    if let Some(inner) = after.strip_prefix('"') {
         let end = inner.find('"')?;
         Some(&inner[..end])
     } else {
@@ -272,7 +360,8 @@ fn extract_usize_array(obj: &str, field: &str) -> Option<Vec<usize>> {
     let end = after.find(']')?;
     let inner = &after[..end];
 
-    let values: Option<Vec<usize>> = inner.split(',')
+    let values: Option<Vec<usize>> = inner
+        .split(',')
         .map(|s| s.trim().parse::<usize>().ok())
         .collect();
     values

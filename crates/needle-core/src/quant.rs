@@ -9,11 +9,37 @@
 //! This makes the inner loop over output features contiguous, enabling AVX2
 //! auto-vectorization in `matvec_inner_avx2` and plain scalar vectorization elsewhere.
 
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+use core::sync::atomic::{AtomicU8, Ordering};
 
 pub const GROUP_SIZE: usize = 32;
 pub const SCALE_MIN: f32 = 1e-8;
+
+// ─── Runtime AVX2 detection ───────────────────────────────────────────────────
+// 0 = not yet checked, 1 = present, 2 = absent.
+// AtomicU8 lives in core, so this is no_std compatible.
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+static AVX2_DETECTED: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
+#[inline]
+pub fn has_avx2() -> bool {
+    let cached = AVX2_DETECTED.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached == 1;
+    }
+    // Check CPUID leaf 7, subleaf 0: EBX bit 5 = AVX2.
+    // CPUID is always available on x86_64.
+    let result = unsafe {
+        use core::arch::x86_64::__cpuid_count;
+        let r = __cpuid_count(7, 0);
+        (r.ebx >> 5) & 1 == 1
+    };
+    AVX2_DETECTED.store(if result { 1 } else { 2 }, Ordering::Relaxed);
+    result
+}
 
 /// Packed INT4 weight tensor with per-group f32 scales.
 ///
@@ -73,8 +99,16 @@ impl QuantizedWeight {
             let g = r0 / gs; // both r0, r1 are in the same group (gs is even)
             for o in 0..out_feat {
                 let scale = scales[g * out_feat + o];
-                let v0 = if r0 < in_feat { w[r0 * out_feat + o] } else { 0.0 };
-                let v1 = if r1 < in_feat { w[r1 * out_feat + o] } else { 0.0 };
+                let v0 = if r0 < in_feat {
+                    w[r0 * out_feat + o]
+                } else {
+                    0.0
+                };
+                let v1 = if r1 < in_feat {
+                    w[r1 * out_feat + o]
+                } else {
+                    0.0
+                };
                 let q0 = crate::math::round(v0 / scale).clamp(-8.0, 7.0) as i8;
                 let q1 = crate::math::round(v1 / scale).clamp(-8.0, 7.0) as i8;
                 let lo = (q0 as u8) & 0x0F;
@@ -83,7 +117,13 @@ impl QuantizedWeight {
             }
         }
 
-        Self { data, scales, in_feat, out_feat, num_groups }
+        Self {
+            data,
+            scales,
+            in_feat,
+            out_feat,
+            num_groups,
+        }
     }
 
     /// Dequantize to f32 into `out` buffer of shape `[in_feat, out_feat]`.
@@ -124,14 +164,22 @@ impl QuantizedWeight {
             *v = 0.0;
         }
 
-        #[cfg(all(target_arch = "x86_64", feature = "simd", target_feature = "avx2"))]
-        // Safety: cfg ensures avx2 is present at compile time.
-        return unsafe { self.matvec_avx2(x, y) };
+        #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+        if has_avx2() {
+            // Safety: has_avx2() confirmed AVX2 via CPUID before this call.
+            return unsafe { self.matvec_avx2(x, y) };
+        }
 
-        #[allow(unreachable_code)]
+        // NEON is mandatory on aarch64 (ARMv8 baseline) — no runtime check needed.
+        #[cfg(all(target_arch = "aarch64", feature = "simd"))]
+        {
+            return unsafe { self.matvec_neon(x, y) };
+        }
+
         self.matvec_scalar(x, y);
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn matvec_scalar(&self, x: &[f32], y: &mut [f32]) {
         let gs = GROUP_SIZE.min(self.in_feat);
         let num_pairs = self.num_groups * gs / 2;
@@ -168,8 +216,6 @@ impl QuantizedWeight {
         // For each pair: broadcast x0 and x1, then for each block of 8 output features:
         //   load 8 packed bytes, extract nibbles, sign-extend, convert to f32, FMA.
         let mask_lo = _mm256_set1_epi32(0x0F0F0F0F_u32 as i32);
-        let bit3 = _mm256_set1_epi8(0x08_u8 as i8);
-        let sign_fill = _mm256_set1_epi8(0xF0_u8 as i8);
 
         for pair in 0..num_pairs {
             let r0 = pair * 2;
@@ -191,9 +237,8 @@ impl QuantizedWeight {
                 let o = blk * 8;
 
                 // Load 8 packed bytes (one per output feature for this pair)
-                let bytes_128 = _mm_loadl_epi64(
-                    self.data[data_base + o..].as_ptr() as *const __m128i
-                );
+                let bytes_128 =
+                    _mm_loadl_epi64(self.data[data_base + o..].as_ptr() as *const __m128i);
                 // Zero-extend to 256-bit (each byte in its own 32-bit lane for nicer ops)
                 let bytes_256 = _mm256_cvtepu8_epi32(bytes_128);
 
@@ -206,12 +251,12 @@ impl QuantizedWeight {
                 // If bit 3 set: value is negative → set bits [31:4] to all-1
                 let lo_sign = _mm256_and_si256(lo_256, _mm256_set1_epi32(8));
                 let lo_neg_mask = _mm256_cmpeq_epi32(lo_sign, _mm256_set1_epi32(8));
-                let lo_ext = _mm256_and_si256(lo_neg_mask, _mm256_set1_epi32(-1i32 & !0x0F));
+                let lo_ext = _mm256_and_si256(lo_neg_mask, _mm256_set1_epi32(!0x0F));
                 let lo_i32 = _mm256_or_si256(lo_256, lo_ext);
 
                 let hi_sign = _mm256_and_si256(hi_256, _mm256_set1_epi32(8));
                 let hi_neg_mask = _mm256_cmpeq_epi32(hi_sign, _mm256_set1_epi32(8));
-                let hi_ext = _mm256_and_si256(hi_neg_mask, _mm256_set1_epi32(-1i32 & !0x0F));
+                let hi_ext = _mm256_and_si256(hi_neg_mask, _mm256_set1_epi32(!0x0F));
                 let hi_i32 = _mm256_or_si256(hi_256, hi_ext);
 
                 // Convert i32 → f32
@@ -248,11 +293,106 @@ impl QuantizedWeight {
                 }
             }
         }
+    }
 
-        // Suppress unused variable warnings for avx2-only variables when out_feat % 8 == 0
-        let _ = mask_lo;
-        let _ = bit3;
-        let _ = sign_fill;
+    /// NEON-accelerated matvec for aarch64.
+    ///
+    /// Processes 8 output features per SIMD step using 64-bit NEON loads and two
+    /// float32x4_t lanes. NEON is mandatory on ARMv8 (aarch64) — no runtime check needed.
+    #[cfg(all(target_arch = "aarch64", feature = "simd"))]
+    #[target_feature(enable = "neon")]
+    unsafe fn matvec_neon(&self, x: &[f32], y: &mut [f32]) {
+        use core::arch::aarch64::*;
+
+        let gs = GROUP_SIZE.min(self.in_feat);
+        let num_pairs = self.num_groups * gs / 2;
+        let out_feat = self.out_feat;
+
+        let mask_u8 = vdup_n_u8(0x0F);
+        let eight_u8 = vdup_n_u8(8);
+        let sixteen = vdup_n_u8(16);
+
+        for pair in 0..num_pairs {
+            let r0 = pair * 2;
+            let r1 = pair * 2 + 1;
+            let g = r0 / gs;
+            let x0 = if r0 < self.in_feat {
+                *x.get_unchecked(r0)
+            } else {
+                0.0
+            };
+            let x1 = if r1 < self.in_feat {
+                *x.get_unchecked(r1)
+            } else {
+                0.0
+            };
+            let x0v = vdupq_n_f32(x0);
+            let x1v = vdupq_n_f32(x1);
+
+            let data_base = pair * out_feat;
+            let scale_base = g * out_feat;
+
+            // 8 output features per NEON step (one vld1_u8 = 8 packed bytes).
+            let full8 = out_feat / 8;
+
+            for blk in 0..full8 {
+                let o = blk * 8;
+
+                // Load 8 packed bytes: each byte encodes one pair of nibbles for one output feature.
+                let bytes = vld1_u8(self.data.get_unchecked(data_base + o) as *const u8);
+
+                // Low nibbles [3:0] and high nibbles [7:4] — values 0..15 as u8.
+                let lo_raw = vand_u8(bytes, mask_u8);
+                let hi_raw = vshr_n_u8::<4>(bytes); // logical shift, upper bits = 0
+
+                // Sign-extend 4-bit → i8: values 8..15 become -8..-1 by subtracting 16.
+                let lo_s8 = vreinterpret_s8_u8(vsub_u8(
+                    lo_raw,
+                    vand_u8(vcge_u8(lo_raw, eight_u8), sixteen),
+                ));
+                let hi_s8 = vreinterpret_s8_u8(vsub_u8(
+                    hi_raw,
+                    vand_u8(vcge_u8(hi_raw, eight_u8), sixteen),
+                ));
+
+                // Widen s8x8 → s16x8 → two s32x4 → two f32x4.
+                let lo_s16 = vmovl_s8(lo_s8);
+                let hi_s16 = vmovl_s8(hi_s8);
+
+                // Lower 4 lanes (o..o+4)
+                let lo_f32_lo = vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo_s16)));
+                let hi_f32_lo = vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi_s16)));
+                let scale_lo = vld1q_f32(self.scales.get_unchecked(scale_base + o) as *const f32);
+                let contrib_lo = vmlaq_f32(vmulq_f32(lo_f32_lo, x0v), hi_f32_lo, x1v);
+                let y_ptr_lo = y.get_unchecked_mut(o) as *mut f32;
+                vst1q_f32(
+                    y_ptr_lo,
+                    vaddq_f32(vld1q_f32(y_ptr_lo), vmulq_f32(contrib_lo, scale_lo)),
+                );
+
+                // Upper 4 lanes (o+4..o+8)
+                let lo_f32_hi = vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo_s16)));
+                let hi_f32_hi = vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi_s16)));
+                let scale_hi =
+                    vld1q_f32(self.scales.get_unchecked(scale_base + o + 4) as *const f32);
+                let contrib_hi = vmlaq_f32(vmulq_f32(lo_f32_hi, x0v), hi_f32_hi, x1v);
+                let y_ptr_hi = y.get_unchecked_mut(o + 4) as *mut f32;
+                vst1q_f32(
+                    y_ptr_hi,
+                    vaddq_f32(vld1q_f32(y_ptr_hi), vmulq_f32(contrib_hi, scale_hi)),
+                );
+            }
+
+            // Scalar tail for remaining < 8 output features.
+            let tail_start = full8 * 8;
+            for o in tail_start..out_feat {
+                let byte = *self.data.get_unchecked(data_base + o);
+                let lo = sign_extend4(byte & 0x0F) as f32;
+                let hi = sign_extend4((byte >> 4) & 0x0F) as f32;
+                let scale = *self.scales.get_unchecked(scale_base + o);
+                *y.get_unchecked_mut(o) += (lo * x0 + hi * x1) * scale;
+            }
+        }
     }
 
     /// Batched matmul: Y = X W  (X shape [batch, in_feat], Y shape [batch, out_feat]).
@@ -338,7 +478,12 @@ mod tests {
             let diff = (y_got[o] - y_ref[o]).abs();
             // Different accumulation order (per-pair vs per-row) causes ~machine-epsilon relative error.
             let tol = 1e-3 * (y_ref[o].abs().max(1.0));
-            assert!(diff < tol, "out[{o}]: matvec={} dequant+dot={} diff={diff} tol={tol}", y_got[o], y_ref[o]);
+            assert!(
+                diff < tol,
+                "out[{o}]: matvec={} dequant+dot={} diff={diff} tol={tol}",
+                y_got[o],
+                y_ref[o]
+            );
         }
     }
 }

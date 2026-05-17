@@ -1,10 +1,11 @@
 //! Rotary Position Embeddings (RoPE).
 //! Applied to Q and K before the attention dot product.
-//! Uses base=10000, interleaved complex rotation on pairs of head-dim elements.
+//! Uses base=10000, split-half rotation: first half × cos − second half × sin,
+//! second half × cos + first half × sin. Matches Python apply_rope exactly.
 
+use crate::math;
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::math;
 
 /// Precomputed cosine/sine tables for RoPE.
 /// Shape: [max_len, head_dim/2]
@@ -29,19 +30,36 @@ impl RopeCache {
             }
         }
 
-        Self { cos, sin, max_len, half_dim }
+        Self {
+            cos,
+            sin,
+            max_len,
+            half_dim,
+        }
     }
 
     /// Apply RoPE to a query/key tensor in-place.
     /// `x`: shape [seq_len, num_heads, head_dim]
     /// `offset`: position offset (for KV cache / decoder incremental decoding)
-    pub fn apply(&self, x: &mut [f32], seq_len: usize, num_heads: usize, head_dim: usize, offset: usize) {
+    pub fn apply(
+        &self,
+        x: &mut [f32],
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+        offset: usize,
+    ) {
         debug_assert_eq!(x.len(), seq_len * num_heads * head_dim);
         debug_assert_eq!(head_dim, self.half_dim * 2);
 
         for t in 0..seq_len {
             let pos = t + offset;
-            debug_assert!(pos < self.max_len, "RoPE position {} exceeds max_len {}", pos, self.max_len);
+            debug_assert!(
+                pos < self.max_len,
+                "RoPE position {} exceeds max_len {}",
+                pos,
+                self.max_len
+            );
             let cos_row = &self.cos[pos * self.half_dim..(pos + 1) * self.half_dim];
             let sin_row = &self.sin[pos * self.half_dim..(pos + 1) * self.half_dim];
 
@@ -51,7 +69,7 @@ impl RopeCache {
                 for i in 0..self.half_dim {
                     let x0 = left[i];
                     let x1 = right[i];
-                    left[i]  = x0 * cos_row[i] - x1 * sin_row[i];
+                    left[i] = x0 * cos_row[i] - x1 * sin_row[i];
                     right[i] = x1 * cos_row[i] + x0 * sin_row[i];
                 }
             }

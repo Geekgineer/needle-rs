@@ -1,3 +1,22 @@
+/// FFN activation function (matches Python `activation` config field).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FfnActivation {
+    #[default]
+    DRelu,
+    SwiGLU,
+    GeGLU,
+}
+
+impl FfnActivation {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "swiglu" => Self::SwiGLU,
+            "geglu" => Self::GeGLU,
+            _ => Self::DRelu, // "drelu" and unknown → DRelu
+        }
+    }
+}
+
 /// Mirror of Python TransformerConfig — all hyperparameters for Needle SAN.
 #[derive(Clone, Debug)]
 pub struct TransformerConfig {
@@ -11,6 +30,10 @@ pub struct TransformerConfig {
     pub max_dec_len: usize,
     pub ffn_dim: usize,
     pub no_feedforward: bool,
+    /// FFN activation function (drelu/swiglu/geglu).
+    pub activation: FfnActivation,
+    /// RoPE base frequency (Python: rope_theta, default 10000.0).
+    pub rope_theta: f32,
     /// Special token IDs
     pub pad_id: u32,
     pub eos_id: u32,
@@ -33,6 +56,8 @@ impl Default for TransformerConfig {
             max_dec_len: 512,
             ffn_dim: 2048,
             no_feedforward: true,
+            activation: FfnActivation::DRelu,
+            rope_theta: 10000.0,
             pad_id: 0,
             eos_id: 1,
             bos_id: 2,
@@ -51,5 +76,29 @@ impl TransformerConfig {
     /// Number of times each KV head is repeated to cover all Q heads.
     pub fn kv_repeat(&self) -> usize {
         self.num_heads / self.num_kv_heads
+    }
+
+    /// Validate structural invariants. Returns an error string if violated.
+    /// Called by the inference engine before constructing a model.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.num_heads == 0 {
+            return Err("num_heads must be > 0");
+        }
+        if self.num_kv_heads == 0 {
+            return Err("num_kv_heads must be > 0");
+        }
+        if self.d_model == 0 {
+            return Err("d_model must be > 0");
+        }
+        if self.d_model % self.num_heads != 0 {
+            return Err("d_model must be divisible by num_heads");
+        }
+        if self.num_heads % self.num_kv_heads != 0 {
+            return Err("num_heads must be divisible by num_kv_heads");
+        }
+        if self.vocab_size == 0 {
+            return Err("vocab_size must be > 0");
+        }
+        Ok(())
     }
 }

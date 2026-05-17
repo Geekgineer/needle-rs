@@ -11,13 +11,13 @@
 //!
 //! Q and K are ZCRMSNorm'd before RoPE (matches Python MultiHeadAttention).
 
-use alloc::vec::Vec;
-use alloc::vec;
 use crate::math;
-use crate::ops::{softmax_inplace, dot};
 use crate::norm::zc_rms_norm_vec;
-use crate::rope::RopeCache;
+use crate::ops::{dot, softmax_inplace};
 use crate::quant::QuantizedWeight;
+use crate::rope::RopeCache;
+use alloc::vec;
+use alloc::vec::Vec;
 
 pub struct KvCache {
     /// Keys:   [max_len, num_kv_heads, head_dim]
@@ -52,6 +52,11 @@ impl KvCache {
 
     pub fn push_kv(&mut self, k_vec: &[f32], v_vec: &[f32]) {
         if self.len >= self.max_len {
+            #[cfg(feature = "std")]
+            eprintln!(
+                "[needle-core] KV cache full at {} steps — output will degrade",
+                self.max_len
+            );
             return;
         }
         let stride = self.kv_stride();
@@ -64,12 +69,12 @@ impl KvCache {
 
 /// Weights for a single MHA layer (shared between encoder self-attn, decoder self-attn, cross-attn).
 pub struct AttnWeights {
-    pub wq: QuantizedWeight,   // [d_model, num_heads * head_dim]
-    pub wk: QuantizedWeight,   // [d_model, num_kv_heads * head_dim]
-    pub wv: QuantizedWeight,   // [d_model, num_kv_heads * head_dim]
-    pub wo: QuantizedWeight,   // [num_heads * head_dim, d_model]
-    pub q_norm: Vec<f32>,      // ZCRMSNorm scale [head_dim]
-    pub k_norm: Vec<f32>,      // ZCRMSNorm scale [head_dim]
+    pub wq: QuantizedWeight, // [d_model, num_heads * head_dim]
+    pub wk: QuantizedWeight, // [d_model, num_kv_heads * head_dim]
+    pub wv: QuantizedWeight, // [d_model, num_kv_heads * head_dim]
+    pub wo: QuantizedWeight, // [num_heads * head_dim, d_model]
+    pub q_norm: Vec<f32>,    // ZCRMSNorm scale [head_dim]
+    pub k_norm: Vec<f32>,    // ZCRMSNorm scale [head_dim]
 }
 
 pub struct AttnConfig {
@@ -91,6 +96,7 @@ impl AttnConfig {
 /// `out`:    output buffer [d_model]
 /// `attn_mask`: optional additive mask; None = full causal (lower-triangular)
 /// `cache`:  KV cache; len tokens already stored, this call appends position `cache.len`
+#[allow(clippy::needless_range_loop)]
 pub fn self_attn_incremental(
     x: &[f32],
     out: &mut Vec<f32>,
@@ -211,10 +217,16 @@ pub fn self_attn_full(
     // ZCRMSNorm per head on Q and K
     for t in 0..seq_len {
         for hi in 0..h {
-            zc_rms_norm_vec(&mut q[(t * h + hi) * hd..(t * h + hi + 1) * hd], &weights.q_norm);
+            zc_rms_norm_vec(
+                &mut q[(t * h + hi) * hd..(t * h + hi + 1) * hd],
+                &weights.q_norm,
+            );
         }
         for ki in 0..kv_h {
-            zc_rms_norm_vec(&mut k[(t * kv_h + ki) * hd..(t * kv_h + ki + 1) * hd], &weights.k_norm);
+            zc_rms_norm_vec(
+                &mut k[(t * kv_h + ki) * hd..(t * kv_h + ki + 1) * hd],
+                &weights.k_norm,
+            );
         }
     }
 
@@ -265,12 +277,13 @@ pub fn self_attn_full(
 /// `mem`:    [enc_len, d_model] encoder output
 /// `out`:    [d_model] output vector
 /// Uses precomputed encoder K/V (stored in a separate KvCache filled from encoder run).
+#[allow(clippy::needless_range_loop)]
 pub fn cross_attn_incremental(
     q_in: &[f32],
     out: &mut Vec<f32>,
     weights: &AttnWeights,
     cfg: &AttnConfig,
-    enc_kv: &KvCache, // precomputed from encoder; rope offset = 0 (keys already rotated)
+    enc_kv: &KvCache, // precomputed cross-attn K/V from encoder hidden states; no RoPE (Python: rope=None)
 ) {
     let d = cfg.d_model;
     let h = cfg.num_heads;
@@ -286,10 +299,8 @@ pub fn cross_attn_incremental(
         zc_rms_norm_vec(&mut q[hi * hd..(hi + 1) * hd], &weights.q_norm);
     }
 
-    // No positional offset for cross-attn Q (some models skip RoPE on cross-attn;
-    // Python uses rope_keys_only=False for cross-attn which means RoPE on both,
-    // but with position = decoder step — caller passes RoPE pre-applied if needed).
-    // For cross-attention the encoder memory K already has RoPE from the encoder run.
+    // Python passes rope=None for cross-attention, so neither Q nor K are RoPE'd here.
+    // Encoder K already has RoPE applied from the encoder forward pass.
 
     let scale = math::powf(hd as f32, -0.5);
     let kv_stride = kv_h * hd;

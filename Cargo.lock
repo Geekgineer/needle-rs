@@ -306,8 +306,12 @@ dependencies = [
 name = "needle-wasm"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "needle-core",
  "needle-infer",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

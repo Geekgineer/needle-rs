@@ -7,10 +7,27 @@ pub fn softmax_inplace(x: &mut [f32]) {
         return;
     }
     let max = x.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    // All-−∞ input: exp(−∞ − (−∞)) = exp(NaN) = NaN. Fall back to uniform.
+    if max == f32::NEG_INFINITY {
+        let uniform = 1.0 / x.len() as f32;
+        for v in x.iter_mut() {
+            *v = uniform;
+        }
+        return;
+    }
     let mut sum = 0.0f32;
     for v in x.iter_mut() {
         *v = math::exp(*v - max);
         sum += *v;
+    }
+    // sum > 0 is guaranteed (at least one exp(0) = 1.0 from the max element),
+    // but guard against pathological subnormal underflow.
+    if sum == 0.0 {
+        let uniform = 1.0 / x.len() as f32;
+        for v in x.iter_mut() {
+            *v = uniform;
+        }
+        return;
     }
     let inv = 1.0 / sum;
     for v in x.iter_mut() {

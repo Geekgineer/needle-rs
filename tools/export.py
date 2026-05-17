@@ -91,7 +91,7 @@ def to_bf16(arr: np.ndarray) -> bytes:
 
 # ── Param extraction ──────────────────────────────────────────────────────────
 
-def extract_tensors(params: dict, num_enc: int, num_dec: int):
+def extract_tensors(params: dict, num_enc: int, num_dec: int, no_feedforward: bool = True):
     """Yield (name, numpy_array) for every tensor the Rust engine needs."""
     # Shortcut references into the scan-stacked param dicts
     enc_p = params["encoder"]["layers"]["EncoderBlock_0"]
@@ -101,6 +101,12 @@ def extract_tensors(params: dict, num_enc: int, num_dec: int):
     yield "embedding", np.array(params["embedding"]["embedding"], np.float32)
     yield "encoder_final_norm", np.array(params["encoder"]["final_norm"]["scale"], np.float32)
     yield "decoder_final_norm", np.array(params["decoder"]["ZCRMSNorm_0"]["scale"], np.float32)
+
+    # ── Contrastive projection head (optional — present when training used contrastive loss) ──
+    if "contrastive_hidden" in params and "contrastive_proj" in params:
+        yield "contrastive_hidden_kernel", np.array(params["contrastive_hidden"]["kernel"], np.float32)
+        yield "contrastive_hidden_bias",   np.array(params["contrastive_hidden"]["bias"],   np.float32)
+        yield "contrastive_proj_kernel",   np.array(params["contrastive_proj"]["kernel"],   np.float32)
 
     # ── Encoder layers ──
     for i in range(num_enc):
@@ -112,6 +118,13 @@ def extract_tensors(params: dict, num_enc: int, num_dec: int):
             yield f"{pf}.self_attn.{key}", np.array(sa[proj]["kernel"][i], np.float32)
         yield f"{pf}.self_attn.q_norm", np.array(sa["q_norm"]["scale"][i], np.float32)
         yield f"{pf}.self_attn.k_norm", np.array(sa["k_norm"]["scale"][i], np.float32)
+        if not no_feedforward:
+            yield f"{pf}.ffn_gate",      np.array(enc_p["ffn_gate"][i], np.float32).reshape(1)
+            yield f"{pf}.ffn_norm",      np.array(enc_p["ZCRMSNorm_1"]["scale"][i], np.float32)
+            ff = enc_p["FeedForward_0"]
+            yield f"{pf}.ffn.gate_proj", np.array(ff["gate_proj"]["kernel"][i], np.float32)
+            yield f"{pf}.ffn.up_proj",   np.array(ff["up_proj"]["kernel"][i], np.float32)
+            yield f"{pf}.ffn.down_proj", np.array(ff["down_proj"]["kernel"][i], np.float32)
 
     # ── Decoder layers ──
     for i in range(num_dec):
@@ -126,9 +139,16 @@ def extract_tensors(params: dict, num_enc: int, num_dec: int):
                 yield f"{pf}.{attn_name}.{key}", np.array(at[proj]["kernel"][i], np.float32)
             yield f"{pf}.{attn_name}.q_norm", np.array(at["q_norm"]["scale"][i], np.float32)
             yield f"{pf}.{attn_name}.k_norm", np.array(at["k_norm"]["scale"][i], np.float32)
+        if not no_feedforward:
+            yield f"{pf}.ffn_gate",      np.array(dec_p["ffn_gate"][i], np.float32).reshape(1)
+            yield f"{pf}.ffn_norm",      np.array(dec_p["ZCRMSNorm_2"]["scale"][i], np.float32)
+            ff = dec_p["FeedForward_0"]
+            yield f"{pf}.ffn.gate_proj", np.array(ff["gate_proj"]["kernel"][i], np.float32)
+            yield f"{pf}.ffn.up_proj",   np.array(ff["up_proj"]["kernel"][i], np.float32)
+            yield f"{pf}.ffn.down_proj", np.array(ff["down_proj"]["kernel"][i], np.float32)
 
 
-QUANT_SUFFIXES = (".wq", ".wk", ".wv", ".wo")
+QUANT_SUFFIXES = (".wq", ".wk", ".wv", ".wo", ".gate_proj", ".up_proj", ".down_proj")
 
 
 def should_quantize(name: str, arr: np.ndarray) -> bool:
@@ -137,11 +157,18 @@ def should_quantize(name: str, arr: np.ndarray) -> bool:
 
 # ── SafeTensors writer ────────────────────────────────────────────────────────
 
-def write_safetensors(tensors: dict, path: str):
-    """tensors: { name: (dtype_str, shape_list, raw_bytes) }"""
+def write_safetensors(tensors: dict, path: str, metadata: dict | None = None):
+    """tensors: { name: (dtype_str, shape_list, raw_bytes) }
+    metadata: optional flat dict of string-valued config keys written as __metadata__.
+    """
     data_parts = []
     offset = 0
     header = {}
+
+    # __metadata__ must contain only string values (SafeTensors spec)
+    if metadata:
+        header["__metadata__"] = {k: str(v) for k, v in metadata.items()}
+
     for name, (dtype, shape, data) in tensors.items():
         end = offset + len(data)
         header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [offset, end]}
@@ -179,7 +206,8 @@ def export_checkpoint(ckpt_path: str, output_dir: str):
     tensors_out: dict[str, tuple] = {}
     n_quant = 0
 
-    for name, arr in extract_tensors(params, num_enc, num_dec):
+    no_feedforward = config.get("no_feedforward", True)
+    for name, arr in extract_tensors(params, num_enc, num_dec, no_feedforward=no_feedforward):
         if should_quantize(name, arr):
             in_f, out_f = arr.shape
             gs = min(GROUP_SIZE, in_f)
@@ -197,20 +225,41 @@ def export_checkpoint(ckpt_path: str, output_dir: str):
             # Norms, gates, q_norm, k_norm → keep as F32
             tensors_out[name] = ("F32", list(arr.shape), arr.tobytes())
 
+    # Embed model config as __metadata__ so the Rust engine can self-configure.
+    export_meta = {
+        "d_model":             config.get("d_model", 512),
+        "num_heads":           config.get("num_heads", 8),
+        "num_kv_heads":        config.get("num_kv_heads", 4),
+        "num_encoder_layers":  num_enc,
+        "num_decoder_layers":  num_dec,
+        "vocab_size":          config.get("vocab_size", 8192),
+        "max_enc_len":         config.get("max_seq_len", 1024),
+        "max_dec_len":         config.get("max_dec_len", 512),
+        "ffn_dim":             config.get("d_ff", 2048),
+        "no_feedforward":      config.get("no_feedforward", True),
+        "activation":          config.get("activation", "drelu"),
+        "rope_theta":          config.get("rope_theta", 10000.0),
+    }
+
     st_path = os.path.join(output_dir, "needle.safetensors")
     print(f"\nExporting {len(tensors_out)} tensors ({n_quant} quantized projections) ...")
-    write_safetensors(tensors_out, st_path)
+    write_safetensors(tensors_out, st_path, metadata=export_meta)
 
     # ── Vocabulary ──
+    # Format: one piece per line, tab-separated from its BPE score.
+    # Score = negative merge order (0.0 = first merged, -7999 = latest).
+    # The Rust tokenizer uses scores to run the correct BPE merge algorithm.
     vocab_path = os.path.join(output_dir, "vocab.txt")
     try:
         from needle.dataset.tokenizer import NeedleTokenizer
         tok = NeedleTokenizer()
-        pieces = [tok.sp.id_to_piece(i) for i in range(tok.sp.get_piece_size())]
+        n = tok.sp.get_piece_size()
         with open(vocab_path, "w", encoding="utf-8") as f:
-            for p in pieces:
-                f.write(p + "\n")
-        print(f"  Wrote {vocab_path}  ({len(pieces)} pieces)")
+            for i in range(n):
+                piece = tok.sp.id_to_piece(i)
+                score = tok.sp.GetScore(i)
+                f.write(f"{piece}\t{score}\n")
+        print(f"  Wrote {vocab_path}  ({n} pieces, with BPE scores)")
     except Exception as e:
         print(f"  Warning: vocab export failed: {e}")
 

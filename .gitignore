@@ -8,3 +8,4 @@ __pycache__/
 .env
 CLAUDE.md
 whatweneedtodo.md
+pkg-nodejs/

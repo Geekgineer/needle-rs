@@ -2,7 +2,7 @@
  * WASM end-to-end test for needle-wasm (Node.js).
  *
  * Prerequisites:
- *   wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg/
+ *   wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg-nodejs/
  *
  * Run from workspace root:
  *   node crates/needle-wasm/tests/node_e2e.js
@@ -15,7 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const PKG = path.resolve(__dirname, "../../../pkg/needle_wasm.js");
+const PKG = path.resolve(__dirname, "../../../pkg-nodejs/needle_wasm.js");
 const WEIGHTS = path.resolve(__dirname, "../../../weights/needle.safetensors");
 const VOCAB = path.resolve(__dirname, "../../../weights/vocab.txt");
 
