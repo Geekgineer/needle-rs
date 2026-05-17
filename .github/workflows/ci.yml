@@ -66,17 +66,18 @@ jobs:
           node-version: '20'
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.12.1 --locked
-      - name: Install binaryen (wasm-opt)
-        run: sudo apt-get install -y binaryen
-      - name: Build WASM (nodejs)
-        run: wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg/
+      # npm binaryen ships v120+ with all required flags; apt ships v108 (too old).
+      - name: Install binaryen
+        run: npm install -g binaryen
+      - name: Build WASM (nodejs target — required by node_e2e.js CommonJS tests)
+        run: wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg-nodejs/
       - name: Optimise WASM
         run: |
-          wasm-opt -Oz \
-            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext \
-            --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
-            pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
-          echo "WASM size after wasm-opt: $(wc -c < pkg/needle_wasm_bg.wasm) bytes"
+          wasm-opt pkg-nodejs/needle_wasm_bg.wasm -Oz \
+            --enable-bulk-memory --enable-bulk-memory-opt --enable-mutable-globals \
+            --enable-sign-ext --enable-nontrapping-float-to-int \
+            -o pkg-nodejs/needle_wasm_bg.wasm
+          echo "WASM size after wasm-opt: $(wc -c < pkg-nodejs/needle_wasm_bg.wasm) bytes"
       - name: Run WASM Node.js tests (no weights — smoke only)
         run: node crates/needle-wasm/tests/node_e2e.js --no-weights || true
         # Full parity tests require weights; CI runs smoke tests only.

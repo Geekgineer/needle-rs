@@ -9,10 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build release binaries
+  # ── Native binaries: CLI + C shared + C static ──────────────────────────
+  build-native:
+    name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -20,6 +22,8 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
             cross: true
+          - target: x86_64-apple-darwin
+            runner: macos-latest
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-pc-windows-msvc
@@ -34,103 +38,208 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cross (aarch64 Linux)
+      - name: Install cross (aarch64 Linux only)
         if: matrix.cross
         run: cargo install cross --locked
 
       - name: Build CLI binary
+        shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release -p needle-cli --target ${{ matrix.target }}
           else
             cargo build --release -p needle-cli --target ${{ matrix.target }}
           fi
-        shell: bash
 
-      - name: Build C shared library
+      - name: Build C library (shared + static)
+        shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release -p needle-c --target ${{ matrix.target }}
           else
             cargo build --release -p needle-c --target ${{ matrix.target }}
           fi
-        shell: bash
 
       - name: Stage artifacts
+        shell: bash
         run: |
           mkdir -p dist
-          TARGET_DIR="target/${{ matrix.target }}/release"
+          D="target/${{ matrix.target }}/release"
           TAG="${{ github.ref_name }}"
+          T="${{ matrix.target }}"
+          OS="${{ matrix.runner }}"
 
           # CLI binary
-          if [ "${{ matrix.runner }}" = "windows-latest" ]; then
-            cp "$TARGET_DIR/needle-rs.exe" "dist/needle-rs-$TAG-${{ matrix.target }}.exe"
+          if [ "$OS" = "windows-latest" ]; then
+            cp "$D/needle-rs.exe" "dist/needle-rs-${TAG}-${T}.exe"
           else
-            cp "$TARGET_DIR/needle-rs" "dist/needle-rs-$TAG-${{ matrix.target }}"
+            cp "$D/needle-rs" "dist/needle-rs-${TAG}-${T}"
+            chmod +x "dist/needle-rs-${TAG}-${T}"
           fi
 
           # C shared library
-          if [ "${{ matrix.runner }}" = "windows-latest" ]; then
-            cp "$TARGET_DIR/needle_c.dll" "dist/libneedle_c-$TAG-${{ matrix.target }}.dll" 2>/dev/null || true
-          elif [ "${{ matrix.runner }}" = "macos-latest" ]; then
-            cp "$TARGET_DIR/libneedle_c.dylib" "dist/libneedle_c-$TAG-${{ matrix.target }}.dylib" 2>/dev/null || true
-          else
-            cp "$TARGET_DIR/libneedle_c.so" "dist/libneedle_c-$TAG-${{ matrix.target }}.so" 2>/dev/null || true
-          fi
+          case "$OS" in
+            windows-latest) cp "$D/needle_c.dll"      "dist/libneedle_c-${TAG}-${T}.dll"   2>/dev/null || true ;;
+            macos-latest)   cp "$D/libneedle_c.dylib" "dist/libneedle_c-${TAG}-${T}.dylib" 2>/dev/null || true ;;
+            *)              cp "$D/libneedle_c.so"    "dist/libneedle_c-${TAG}-${T}.so"    2>/dev/null || true ;;
+          esac
 
-          # Header
-          cp crates/needle-c/include/needle.h "dist/needle-$TAG.h"
-        shell: bash
+          # C static library
+          case "$OS" in
+            windows-latest) cp "$D/needle_c.lib"    "dist/libneedle_c-${TAG}-${T}.lib" 2>/dev/null || true ;;
+            *)              cp "$D/libneedle_c.a"    "dist/libneedle_c-${TAG}-${T}.a"   2>/dev/null || true ;;
+          esac
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+          # C header — identical for all targets; deduplicate at release time
+          cp crates/needle-c/include/needle.h "dist/needle-${TAG}.h" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.target }}
           path: dist/
 
-  wasm-artifact:
-    name: Build WASM artifact
+  # ── WASM (web target) ───────────────────────────────────────────────────
+  build-wasm:
+    name: Build WASM
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - run: cargo install wasm-pack --version 0.12.1 --locked
-      - run: sudo apt-get install -y binaryen
+
+      # Install binaryen via npm — gets v120+; apt ships v108 which lacks
+      # --enable-bulk-memory-opt and other flags we depend on.
+      - run: npm install -g binaryen
+
       - run: wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
+
+      - name: Restore pkg/package.json with release version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - << 'PYEOF'
+          import json, os
+          version = os.environ["TAG"].lstrip("v")
+          pkg = {
+              "name": "needle-rs",
+              "version": version,
+              "description": "258 KB WASM runtime for Needle — a 26M-parameter tool-calling transformer. Runs in the browser, Cloudflare Workers, and Node.js. No backend required.",
+              "license": "MIT",
+              "repository": {"type": "git", "url": "https://github.com/geekgineer/needle-rs"},
+              "homepage": "https://github.com/geekgineer/needle-rs",
+              "keywords": ["wasm","webassembly","ai","llm","tool-calling","function-calling","transformer","rust","no-backend","browser-ai"],
+              "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts"],
+              "module": "needle_wasm.js",
+              "types": "needle_wasm.d.ts",
+              "exports": {".": {"import": "./needle_wasm.js","types": "./needle_wasm.d.ts"}},
+              "sideEffects": False
+          }
+          open("pkg/package.json", "w").write(json.dumps(pkg, indent=2) + "\n")
+          print(f"pkg/package.json set to version {version}")
+          PYEOF
+
       - name: Optimise WASM
         run: |
-          wasm-opt -Oz \
-            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext \
-            --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
-            pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
-      - name: Stage WASM
+          wasm-opt pkg/needle_wasm_bg.wasm -Oz \
+            --enable-bulk-memory --enable-bulk-memory-opt --enable-mutable-globals \
+            --enable-sign-ext --enable-nontrapping-float-to-int \
+            -o pkg/needle_wasm_bg.wasm
+          echo "WASM size: $(wc -c < pkg/needle_wasm_bg.wasm) bytes"
+
+      - name: Stage WASM release artifact
         run: |
           mkdir -p dist
           TAG="${{ github.ref_name }}"
-          cp pkg/needle_wasm_bg.wasm "dist/needle_wasm-$TAG.wasm"
-          cp pkg/needle_wasm.js "dist/needle_wasm-$TAG.js"
+          cp pkg/needle_wasm_bg.wasm "dist/needle_wasm-${TAG}.wasm"
+          cp pkg/needle_wasm.js      "dist/needle_wasm-${TAG}.js"
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-wasm
           path: dist/
 
+      # Preserve the full pkg/ for the npm-publish job (avoids rebuilding)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-npm
+          path: pkg/
+
+  # ── GitHub release ──────────────────────────────────────────────────────
   github-release:
     name: Create GitHub release
-    needs: [release, wasm-artifact]
+    needs: [build-native, build-wasm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
           merge-multiple: true
           path: dist/
+
       - name: Generate checksums
         run: sha256sum dist/* > dist/SHA256SUMS
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+
+  # ── npm publish ─────────────────────────────────────────────────────────
+  npm-publish:
+    name: Publish to npm
+    needs: [build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pkg-npm
+          path: pkg/
+
+      - name: Publish needle-rs to npm
+        run: npm publish --access public
+        working-directory: pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── crates.io publish ───────────────────────────────────────────────────
+  crates-publish:
+    name: Publish to crates.io
+    needs: [github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # Publish leaf-first; sleep 45 s between each so crates.io indexes
+          # before the next crate tries to resolve it as a dependency.
+          cargo publish -p needle-core
+          sleep 45
+          cargo publish -p needle-infer
+          sleep 45
+          cargo publish -p needle-c
+          sleep 45
+          cargo publish -p needle-cli
