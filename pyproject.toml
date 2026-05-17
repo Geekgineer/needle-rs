@@ -24,6 +24,5 @@ Repository = "https://github.com/geekgineer/needle-rs"
 
 [tool.maturin]
 manifest-path = "crates/needle-python/Cargo.toml"
-python-source = "python"
 module-name = "needle_rs"
 features = ["pyo3/extension-module"]

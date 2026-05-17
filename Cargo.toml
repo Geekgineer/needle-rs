@@ -14,6 +14,9 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Abdalrahman Ibrahim"]
 license = "MIT"
+repository = "https://github.com/geekgineer/needle-rs"
+homepage = "https://github.com/geekgineer/needle-rs"
+readme = "README.md"
 
 [profile.release]
 opt-level = 3
