@@ -135,7 +135,7 @@ jobs:
               "version": version,
               "description": "258 KB WASM runtime for Needle — a 26M-parameter tool-calling transformer. Runs in the browser, Cloudflare Workers, and Node.js. No backend required.",
               "license": "MIT",
-              "repository": {"type": "git", "url": "https://github.com/geekgineer/needle-rs"},
+              "repository": {"type": "git", "url": "git+https://github.com/geekgineer/needle-rs.git"},
               "homepage": "https://github.com/geekgineer/needle-rs",
               "keywords": ["wasm","webassembly","ai","llm","tool-calling","function-calling","transformer","rust","no-backend","browser-ai"],
               "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts"],
@@ -242,7 +242,13 @@ jobs:
           path: pkg/
 
       - name: Publish needle-rs to npm
-        run: npm publish --access public
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "needle-rs@${VERSION}" version 2>/dev/null | grep -q "${VERSION}"; then
+            echo "needle-rs@${VERSION} already published — skipping"
+          else
+            npm publish --access public
+          fi
         working-directory: pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

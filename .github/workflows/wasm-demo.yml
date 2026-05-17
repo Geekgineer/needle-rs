@@ -36,7 +36,7 @@ jobs:
             "version": "0.1.0",
             "description": "258 KB WASM runtime for Needle — a 26M-parameter tool-calling transformer. Runs in the browser, Cloudflare Workers, and Node.js. No backend required.",
             "license": "MIT",
-            "repository": {"type": "git", "url": "https://github.com/geekgineer/needle-rs"},
+            "repository": {"type": "git", "url": "git+https://github.com/geekgineer/needle-rs.git"},
             "homepage": "https://github.com/geekgineer/needle-rs",
             "keywords": ["wasm","webassembly","ai","llm","tool-calling","function-calling","transformer","rust","no-backend","browser-ai"],
             "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts"],
