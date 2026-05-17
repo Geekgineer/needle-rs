@@ -309,7 +309,7 @@ jobs:
       - run: pip install twine
 
       - name: Upload to PyPI
-        run: twine upload dist/*.whl
+        run: twine upload --skip-existing dist/*.whl
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
@@ -330,12 +330,22 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          # Skip crates that are already published (idempotent re-runs).
+          publish_crate() {
+            local pkg=$1
+            local out; out=$(cargo publish -p "$pkg" 2>&1); local rc=$?
+            echo "$out"
+            if [ $rc -ne 0 ] && echo "$out" | grep -q "already exists"; then
+              echo "→ $pkg already on crates.io, skipping"; return 0
+            fi
+            return $rc
+          }
           # Publish leaf-first; sleep 45 s between each so crates.io indexes
           # before the next crate tries to resolve it as a dependency.
-          cargo publish -p needle-core
+          publish_crate needle-core
           sleep 45
-          cargo publish -p needle-infer
+          publish_crate needle-infer
           sleep 45
-          cargo publish -p needle-c
+          publish_crate needle-c
           sleep 45
-          cargo publish -p needle-cli
+          publish_crate needle-cli
