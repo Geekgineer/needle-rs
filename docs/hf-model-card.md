@@ -47,9 +47,19 @@ inference: false
   <img src="./banner.svg" alt="needle-rs" width="100%"/>
 </div>
 
+<div align="center">
+
+[![GitHub](https://img.shields.io/badge/GitHub-Geekgineer%2Fneedle--rs-181717?style=flat-square&logo=github)](https://github.com/Geekgineer/needle-rs)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-needle--rs.pages.dev-CE422B?style=flat-square)](https://needle-rs.pages.dev)
+[![npm](https://img.shields.io/npm/v/needle-rs?style=flat-square&color=CE422B)](https://www.npmjs.com/package/needle-rs)
+[![PyPI](https://img.shields.io/pypi/v/needle-rs?style=flat-square&color=CE422B)](https://pypi.org/project/needle-rs/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](https://github.com/Geekgineer/needle-rs/blob/main/LICENSE)
+
+</div>
+
 # needle-rs-safetensors
 
-**INT4-packed SafeTensors weights for [Needle](https://github.com/cactus-compute/needle), ready to load into the [needle-rs](https://github.com/geekgineer/needle-rs) pure-Rust + WebAssembly runtime.**
+**INT4-packed SafeTensors weights for [Needle](https://github.com/cactus-compute/needle), ready to load into the [needle-rs](https://github.com/Geekgineer/needle-rs) pure-Rust + WebAssembly runtime.**
 
 > **This is a format conversion.** The model itself — its architecture, training procedure, dataset, and original weights — is the work of [**Cactus Compute**](https://github.com/cactus-compute) (Henry Ndubuaku et al., 2026), released under MIT. Original repository: [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle).
 >
