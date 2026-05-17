@@ -8,5 +8,6 @@ __pycache__/
 .env
 CLAUDE.md
 whatweneedtodo.md
+ACHIEVEMENTS.md
 pkg-nodejs/
 tests/e2e_vectors.json
