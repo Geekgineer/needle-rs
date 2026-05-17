@@ -2,6 +2,9 @@
 name = "needle-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Needle command-line inference tool"
 
 [[bin]]

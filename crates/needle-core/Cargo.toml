@@ -2,6 +2,9 @@
 name = "needle-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "no_std compute kernels for Needle inference (matmul, attention, norm, rope, quant)"
 
 [features]
