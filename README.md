@@ -12,6 +12,7 @@
     <a href="#parity"><img src="https://img.shields.io/badge/parity-560%2F560%20token--exact-brightgreen?style=flat-square" alt="Parity 560/560"/></a>
     <a href="https://crates.io/crates/needle-rs"><img src="https://img.shields.io/crates/v/needle-rs?style=flat-square&color=CE422B" alt="crates.io"/></a>
     <a href="https://www.npmjs.com/package/needle-rs"><img src="https://img.shields.io/npm/v/needle-rs?style=flat-square&color=CE422B" alt="npm"/></a>
+    <a href="https://pypi.org/project/needle-rs/"><img src="https://img.shields.io/pypi/v/needle-rs?style=flat-square&color=CE422B" alt="PyPI"/></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT"/></a>
   </p>
 
@@ -25,7 +26,7 @@
 
 <br/>
 
-A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute/needle) by [Cactus Compute](https://github.com/cactus-compute) — a 26M-parameter transformer that maps `(query, tool list) → JSON call` in one forward pass. Deploys to browsers, edge workers, CLIs, and `no_std` embedded targets. No Python, no server, no API key.
+A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute/needle) by [Cactus Compute](https://github.com/cactus-compute) — a 26M-parameter transformer that maps `(query, tool list) → JSON call` in one forward pass. Deploys to browsers, edge workers, CLIs, Python, and `no_std` embedded targets. No server, no API key.
 
 <br/>
 
@@ -89,7 +90,7 @@ Same answer to *"did the user ask for a flight booking?"* — at a fraction of t
 
 <table>
 <tr>
-<td valign="top" width="50%">
+<td valign="top" width="33%">
 
 **Browser / Node**
 
@@ -111,7 +112,7 @@ engine.run(
 ```
 
 </td>
-<td valign="top" width="50%">
+<td valign="top" width="33%">
 
 **Rust**
 
@@ -128,6 +129,27 @@ let engine = NeedleEngine::load(
 )?;
 let result = engine.run(query, tools_json);
 println!("{}", result.text);
+```
+
+</td>
+<td valign="top" width="33%">
+
+**Python**
+
+```bash
+pip install needle-rs
+```
+
+```python
+from needle_rs import NeedleEngine
+
+engine = NeedleEngine.load(
+    "needle.safetensors",
+    "vocab.txt",
+)
+result = engine.run(query, tools_json)
+print(result)
+# → [{"name":"book_flight","arguments":{...}}]
 ```
 
 </td>
@@ -163,7 +185,8 @@ Or load directly from a URL in the browser — no install step.
 <tr><td>Node.js <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>258 KB</code></td></tr>
 <tr><td>Cloudflare Workers</td><td align="center">✓</td><td align="right"><code>258 KB</code></td></tr>
 <tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>533 KB</code></td></tr>
-<tr><td>C / C++ / Python / Go / Swift <sub>(via FFI)</sub></td><td align="center">✓</td><td align="right"><code>557 KB</code></td></tr>
+<tr><td>Python <sub>(native wheel)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
+<tr><td>C / C++ / Go / Swift <sub>(via FFI)</sub></td><td align="center">✓</td><td align="right"><code>557 KB</code></td></tr>
 <tr><td><code>no_std</code> embedded (Rust)</td><td align="center">✓</td><td align="right"><sub>size varies</sub></td></tr>
 <tr><td>iOS / Android <sub>(use <a href="https://github.com/cactus-compute/cactus">Cactus</a>)</sub></td><td align="center"><sub>—</sub></td><td align="right"><sub>—</sub></td></tr>
 <tr><td>Apple NPU / Snapdragon NPU <sub>(use <a href="https://github.com/cactus-compute/cactus">Cactus</a>)</sub></td><td align="center"><sub>—</sub></td><td align="right"><sub>—</sub></td></tr>

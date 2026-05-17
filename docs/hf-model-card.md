@@ -148,6 +148,39 @@ const result = engine.run("Book a flight from London to JFK tomorrow", toolsJson
 
 **Live demo:** [needle-rs.pages.dev](https://needle-rs.pages.dev) — the demo loads exactly these files from this repository.
 
+### Python
+
+```bash
+pip install needle-rs
+```
+
+```python
+from needle_rs import NeedleEngine
+
+engine = NeedleEngine.load("weights/needle.safetensors", "weights/vocab.txt")
+
+# Single call
+result = engine.run(
+    "Book a flight from London to JFK tomorrow",
+    '[{"name":"book_flight","parameters":{"type":"object","properties":{"origin":{"type":"string"},"destination":{"type":"string"},"date":{"type":"string"}}}}]',
+)
+# → [{"name":"book_flight","arguments":{"origin":"London","destination":"JFK","date":"tomorrow"}}]
+
+# Streaming (callback fires per token)
+result = engine.run_stream(query, tools_json, lambda token_id, piece: print(piece, end="", flush=True))
+
+# Batch
+results = engine.run_batch([("query1", tools1), ("query2", tools2)])
+
+# Semantic tool retrieval (requires weights with a contrastive head)
+ranked = engine.retrieve_tools(
+    "What's the weather in Paris?",
+    ["Get current weather for a location", "Book a flight", "Send an email"],
+    top_k=2,
+)
+# → [(0, 0.91), (1, 0.38)]
+```
+
 ### Multi-tool routing example
 
 Needle is trained to pick the right tool from a list, not just fill a single tool's parameters:
