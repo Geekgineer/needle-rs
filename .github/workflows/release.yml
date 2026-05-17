@@ -222,7 +222,7 @@ jobs:
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           preCommands: >
             npx wrangler pages project create needle-rs
-            --production-branch=master 2>/dev/null || true
+            --production-branch=main 2>/dev/null || true
           command: pages deploy _site --project-name=needle-rs --commit-dirty=true
 
   # ── npm publish ─────────────────────────────────────────────────────────
