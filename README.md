@@ -8,7 +8,9 @@
   </p>
 
   <p>
-    <a href="https://github.com/geekgineer/needle-rs/actions/workflows/ci.yml"><img src="https://github.com/geekgineer/needle-rs/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+    <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/ci.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/></a>
+    <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml/badge.svg" alt="Release"/></a>
+    <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml/badge.svg?branch=main" alt="Demo"/></a>
     <a href="#parity"><img src="https://img.shields.io/badge/parity-560%2F560%20token--exact-brightgreen?style=flat-square" alt="Parity 560/560"/></a>
     <a href="https://crates.io/crates/needle-rs"><img src="https://img.shields.io/crates/v/needle-rs?style=flat-square&color=CE422B" alt="crates.io"/></a>
     <a href="https://www.npmjs.com/package/needle-rs"><img src="https://img.shields.io/npm/v/needle-rs?style=flat-square&color=CE422B" alt="npm"/></a>
