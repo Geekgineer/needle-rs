@@ -19,7 +19,7 @@ fn bench_matvec(c: &mut Criterion) {
 
     for &(in_feat, out_feat, label) in shapes {
         let w: Vec<f32> = (0..in_feat * out_feat)
-            .map(|i| ((i as f32).sin() * 0.1))
+            .map(|i| (i as f32).sin() * 0.1)
             .collect();
         let x: Vec<f32> = (0..in_feat).map(|i| (i as f32).cos()).collect();
         let qw = QuantizedWeight::quantize(&w, in_feat, out_feat);
@@ -102,7 +102,7 @@ fn bench_matmul(c: &mut Criterion) {
     // Encoder full-sequence projection: batch=128 tokens, 512→512
     let (in_feat, out_feat) = (512, 512);
     let w: Vec<f32> = (0..in_feat * out_feat)
-        .map(|i| ((i as f32).sin() * 0.1))
+        .map(|i| (i as f32).sin() * 0.1)
         .collect();
     let qw = QuantizedWeight::quantize(&w, in_feat, out_feat);
 
