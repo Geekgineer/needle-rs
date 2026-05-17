@@ -479,7 +479,7 @@ fn restore_tool_names(text: &str, tool_defs: &[crate::constrained::ToolDef]) -> 
         .filter(|t| t.name != t.snake_name)
         .map(|t| (t.snake_name.as_str(), t.name.as_str()))
         .collect();
-    renames.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+    renames.sort_by_key(|(a, _): &(&str, &str)| std::cmp::Reverse(a.len()));
 
     if renames.is_empty() {
         return text.to_string();
