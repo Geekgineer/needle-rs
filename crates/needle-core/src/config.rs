@@ -90,10 +90,10 @@ impl TransformerConfig {
         if self.d_model == 0 {
             return Err("d_model must be > 0");
         }
-        if self.d_model % self.num_heads != 0 {
+        if !self.d_model.is_multiple_of(self.num_heads) {
             return Err("d_model must be divisible by num_heads");
         }
-        if self.num_heads % self.num_kv_heads != 0 {
+        if !self.num_heads.is_multiple_of(self.num_kv_heads) {
             return Err("num_heads must be divisible by num_kv_heads");
         }
         if self.vocab_size == 0 {
