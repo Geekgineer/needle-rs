@@ -418,7 +418,6 @@ fn test_run_batch_matches_individual_runs() {
 fn test_encode_contrastive_without_head_returns_none() {
     // Build a minimal engine from a tiny in-memory SafeTensors (no contrastive tensors)
     // and verify encode_contrastive returns None.
-    
 
     // We can't easily build a full in-memory engine without real weights, but we can at
     // least verify the API contract by confirming contrastive_dim() == 0 without head.

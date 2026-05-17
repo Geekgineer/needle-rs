@@ -135,9 +135,13 @@ fn sm_tail_rollover_before_name_trigger() {
     // Pad with 10 bytes before the NAME_TRIGGER so the trigger arrives in
     // a window that crosses the TAIL_LEN=13 boundary.
     let mut input = b"[{\"x\":\"y\",".to_vec(); // 10 bytes preamble
-    input.extend_from_slice(b"\"name\":\"");    // trigger starts at byte 10
+    input.extend_from_slice(b"\"name\":\""); // trigger starts at byte 10
     let m = sm(&input);
-    assert_eq!(m.state, JsonState::InName, "InName must be entered after preamble");
+    assert_eq!(
+        m.state,
+        JsonState::InName,
+        "InName must be entered after preamble"
+    );
 }
 
 #[test]
@@ -207,7 +211,10 @@ fn parse_json_schema_single_tool() {
     assert!(keys.contains(&"location".to_string()));
     assert!(keys.contains(&"unit".to_string()));
     // Python bug fix: these structural keys must NOT appear as param keys
-    assert!(!keys.contains(&"properties".to_string()), "\"properties\" must not be a param key");
+    assert!(
+        !keys.contains(&"properties".to_string()),
+        "\"properties\" must not be a param key"
+    );
     assert!(!keys.contains(&"type".to_string()));
     assert!(!keys.contains(&"required".to_string()));
 }
@@ -296,9 +303,8 @@ fn parse_translate_text_camel_normalised() {
 
 #[test]
 fn parse_preserves_original_name() {
-    let tools = ToolDef::from_json(
-        r#"[{"name":"bookFlight","parameters":{"origin":{"type":"string"}}}]"#,
-    );
+    let tools =
+        ToolDef::from_json(r#"[{"name":"bookFlight","parameters":{"origin":{"type":"string"}}}]"#);
     assert_eq!(tools[0].name, "bookFlight");
     assert_eq!(tools[0].snake_name, "book_flight");
 }
@@ -375,10 +381,16 @@ fn prefix_shadow_short_name_allowed_at_terminal() {
 
     let mask = dec.logit_mask(16);
     assert_eq!(mask[10], 0.0, "get_weather\" must be allowed (terminal)");
-    assert_eq!(mask[11], 0.0, "get_weather_forecast\" must be allowed (terminal)");
+    assert_eq!(
+        mask[11], 0.0,
+        "get_weather_forecast\" must be allowed (terminal)"
+    );
     assert_eq!(mask[12], 0.0, "get_weath prefix must be allowed");
     assert_eq!(mask[13], 0.0, "get_weather_f prefix must be allowed");
-    assert!(mask[14] < 0.0, "get_weather_x\" not in trie: must be blocked");
+    assert!(
+        mask[14] < 0.0,
+        "get_weather_x\" not in trie: must be blocked"
+    );
     assert!(mask[15] < 0.0, "set_weather\" not in trie: must be blocked");
 }
 
@@ -490,7 +502,6 @@ fn json_schema_tool_uses_correct_arg_keys() {
     ];
     let trigger: &[u8] = b"[{\"name\":\"get_weather\",\"arguments\":{\"";
 
-
     let mut dec_flat = make_decoder(flat_tools, vocab);
     drive(&mut dec_flat, trigger);
     let mask_flat = dec_flat.logit_mask(4);
@@ -507,7 +518,10 @@ fn json_schema_tool_uses_correct_arg_keys() {
     assert_eq!(mask_schema[0], 0.0, "schema: location valid");
     assert_eq!(mask_schema[1], 0.0, "schema: unit valid");
     assert!(mask_schema[2] < 0.0, "schema: other blocked");
-    assert!(mask_schema[3] < 0.0, "schema: properties blocked — Python bug fix");
+    assert!(
+        mask_schema[3] < 0.0,
+        "schema: properties blocked — Python bug fix"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -521,50 +535,84 @@ fn snake(name: &str) -> String {
 }
 
 #[test]
-fn snake_passthrough() { assert_eq!(snake("get_weather"), "get_weather"); }
+fn snake_passthrough() {
+    assert_eq!(snake("get_weather"), "get_weather");
+}
 
 #[test]
-fn snake_camel_two_words() { assert_eq!(snake("getWeather"), "get_weather"); }
+fn snake_camel_two_words() {
+    assert_eq!(snake("getWeather"), "get_weather");
+}
 
 #[test]
-fn snake_camel_three_words() { assert_eq!(snake("bookFlightTicket"), "book_flight_ticket"); }
+fn snake_camel_three_words() {
+    assert_eq!(snake("bookFlightTicket"), "book_flight_ticket");
+}
 
 #[test]
-fn snake_pascal_two_words() { assert_eq!(snake("GetWeather"), "get_weather"); }
+fn snake_pascal_two_words() {
+    assert_eq!(snake("GetWeather"), "get_weather");
+}
 
 #[test]
-fn snake_pascal_three_words() { assert_eq!(snake("BookFlightTicket"), "book_flight_ticket"); }
+fn snake_pascal_three_words() {
+    assert_eq!(snake("BookFlightTicket"), "book_flight_ticket");
+}
 
 #[test]
-fn snake_upper_two_words() { assert_eq!(snake("GET_WEATHER"), "get_weather"); }
+fn snake_upper_two_words() {
+    assert_eq!(snake("GET_WEATHER"), "get_weather");
+}
 
 #[test]
-fn snake_upper_three_words() { assert_eq!(snake("WEB_SEARCH_API"), "web_search_api"); }
+fn snake_upper_three_words() {
+    assert_eq!(snake("WEB_SEARCH_API"), "web_search_api");
+}
 
 #[test]
-fn snake_hyphen_two_words() { assert_eq!(snake("get-weather"), "get_weather"); }
+fn snake_hyphen_two_words() {
+    assert_eq!(snake("get-weather"), "get_weather");
+}
 
 #[test]
-fn snake_hyphen_three_words() { assert_eq!(snake("web-search-api"), "web_search_api"); }
+fn snake_hyphen_three_words() {
+    assert_eq!(snake("web-search-api"), "web_search_api");
+}
 
 #[test]
-fn snake_single_word() { assert_eq!(snake("weather"), "weather"); }
+fn snake_single_word() {
+    assert_eq!(snake("weather"), "weather");
+}
 
 #[test]
-fn snake_with_number_suffix() { assert_eq!(snake("get_weather_v2"), "get_weather_v2"); }
+fn snake_with_number_suffix() {
+    assert_eq!(snake("get_weather_v2"), "get_weather_v2");
+}
 
 #[test]
-fn snake_camel_translate_text() { assert_eq!(snake("translateText"), "translate_text"); }
+fn snake_camel_translate_text() {
+    assert_eq!(snake("translateText"), "translate_text");
+}
 
 #[test]
-fn snake_camel_stock_price() { assert_eq!(snake("getStockPrice"), "get_stock_price"); }
+fn snake_camel_stock_price() {
+    assert_eq!(snake("getStockPrice"), "get_stock_price");
+}
 
 #[test]
-fn snake_all_lowercase_unchanged() { assert_eq!(snake("search"), "search"); }
+fn snake_all_lowercase_unchanged() {
+    assert_eq!(snake("search"), "search");
+}
 
 #[test]
 fn snake_result_is_all_lowercase() {
-    for name in &["GetWeather", "WEB_SEARCH", "bookFlight", "get-time", "translateText"] {
+    for name in &[
+        "GetWeather",
+        "WEB_SEARCH",
+        "bookFlight",
+        "get-time",
+        "translateText",
+    ] {
         let result = snake(name);
         assert!(
             result.chars().all(|c| c.is_lowercase() || c == '_'),

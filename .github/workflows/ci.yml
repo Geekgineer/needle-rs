@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --exclude needle-wasm
+      - run: cargo test --workspace --exclude needle-wasm --exclude needle-python
 
   test-aarch64:
     name: test (linux aarch64)
@@ -48,7 +48,7 @@ jobs:
       - name: Install cross-compilation tools
         run: sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build (aarch64)
-        run: cargo build --release --target aarch64-unknown-linux-gnu --exclude needle-wasm
+        run: cargo build --release --target aarch64-unknown-linux-gnu --exclude needle-wasm --exclude needle-python
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 

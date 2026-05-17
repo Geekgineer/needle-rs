@@ -1,6 +1,6 @@
 use needle_infer::engine::NeedleEngine;
-use pyo3::prelude::*;
 use pyo3::exceptions::PyIOError;
+use pyo3::prelude::*;
 
 #[pyclass(name = "NeedleEngine", module = "needle_rs")]
 struct PyNeedleEngine {

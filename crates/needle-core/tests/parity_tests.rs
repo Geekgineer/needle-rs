@@ -697,11 +697,21 @@ fn test_config_validate_rejects_bad_head_divisibility() {
     );
 
     assert!(
-        TransformerConfig { num_heads: 0, ..Default::default() }.validate().is_err(),
+        TransformerConfig {
+            num_heads: 0,
+            ..Default::default()
+        }
+        .validate()
+        .is_err(),
         "num_heads=0 must fail"
     );
     assert!(
-        TransformerConfig { vocab_size: 0, ..Default::default() }.validate().is_err(),
+        TransformerConfig {
+            vocab_size: 0,
+            ..Default::default()
+        }
+        .validate()
+        .is_err(),
         "vocab_size=0 must fail"
     );
 }
