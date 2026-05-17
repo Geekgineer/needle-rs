@@ -2,7 +2,7 @@ name: WASM Demo Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -62,12 +62,8 @@ jobs:
           cp -r pkg/ _site/pkg/
 
       - name: Deploy to Cloudflare Pages
-        # TODO: Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to repository secrets.
-        # See: https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: needle-rs
-          directory: _site
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy _site --project-name=needle-rs --commit-dirty=true

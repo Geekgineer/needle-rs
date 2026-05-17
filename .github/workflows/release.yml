@@ -196,6 +196,32 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
+  # ── Cloudflare Pages demo deploy ────────────────────────────────────────
+  deploy-demo:
+    name: Deploy demo to Cloudflare Pages
+    needs: [build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pkg-npm
+          path: pkg/
+
+      - name: Assemble demo site
+        run: |
+          mkdir -p _site
+          cp -r examples/browser-demo/* _site/
+          cp -r pkg/ _site/pkg/
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy _site --project-name=needle-rs --commit-dirty=true
+
   # ── npm publish ─────────────────────────────────────────────────────────
   npm-publish:
     name: Publish to npm
