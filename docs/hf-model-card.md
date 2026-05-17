@@ -37,7 +37,7 @@ tags:
   - int4
   - safetensors
   - no-server
-pipeline_tag: text2text-generation
+pipeline_tag: text-generation
 base_model: Cactus-Compute/needle
 base_model_relation: quantized
 inference: false
