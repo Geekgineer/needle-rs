@@ -32,6 +32,7 @@ pub fn has_avx2() -> bool {
     }
     // Check CPUID leaf 7, subleaf 0: EBX bit 5 = AVX2.
     // CPUID is always available on x86_64.
+    #[allow(unused_unsafe)]
     let result = unsafe {
         use core::arch::x86_64::__cpuid_count;
         let r = __cpuid_count(7, 0);
