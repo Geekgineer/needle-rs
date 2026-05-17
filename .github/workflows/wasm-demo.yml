@@ -27,12 +27,31 @@ jobs:
       - name: Build WASM (web target)
         run: wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
 
+      - name: Restore pkg/package.json
+        run: |
+          cat > pkg/package.json << 'EOF'
+          {
+            "name": "needle-rs",
+            "version": "0.1.0",
+            "description": "258 KB WASM runtime for Needle — a 26M-parameter tool-calling transformer. Runs in the browser, Cloudflare Workers, and Node.js. No backend required.",
+            "license": "MIT",
+            "repository": {"type": "git", "url": "https://github.com/geekgineer/needle-rs"},
+            "homepage": "https://github.com/geekgineer/needle-rs",
+            "keywords": ["wasm","webassembly","ai","llm","tool-calling","function-calling","transformer","rust","no-backend","browser-ai"],
+            "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts"],
+            "module": "needle_wasm.js",
+            "types": "needle_wasm.d.ts",
+            "exports": {".": {"import": "./needle_wasm.js","types": "./needle_wasm.d.ts"}},
+            "sideEffects": false
+          }
+          EOF
+
       - name: Optimise WASM
         run: |
-          wasm-opt -Oz \
-            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext \
-            --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
-            pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
+          wasm-opt pkg/needle_wasm_bg.wasm -Oz \
+            --enable-bulk-memory --enable-bulk-memory-opt --enable-mutable-globals \
+            --enable-sign-ext --enable-nontrapping-float-to-int \
+            -o pkg/needle_wasm_bg.wasm
           echo "WASM size: $(wc -c < pkg/needle_wasm_bg.wasm) bytes"
 
       - name: Assemble demo site

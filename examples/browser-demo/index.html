@@ -21,7 +21,7 @@
         <a href="https://github.com/cactus-compute/needle" class="text-blue-400 hover:underline" target="_blank">
           Needle by Cactus Compute</a>
         — running entirely in your browser.
-        <br>260 KB WASM · 22 MB weights (loaded once, cached) · no server.
+        <br>258 KB WASM · 22 MB weights (loaded once, cached) · no server.
       </p>
     </header>
 
@@ -146,6 +146,10 @@
         loadBtn.disabled = false;
         loadBtn.textContent = "Retry";
       }
+    });
+
+    document.getElementById("query-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !runBtn.disabled) runBtn.click();
     });
 
     runBtn.addEventListener("click", () => {

@@ -1,7 +1,7 @@
 # Browser demo
 
 A self-contained HTML page that runs needle-rs inference entirely in the browser.
-No server. No Python. The WASM module is 260 KB; weights (22 MB) load from HuggingFace on demand.
+No server. No Python. The WASM module is 258 KB; weights (22 MB) load from HuggingFace on demand.
 
 This is also the source for the deployed Cloudflare Pages demo at **needle-rs.pages.dev**.
 
@@ -20,11 +20,11 @@ Build the WASM package first:
 wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
 ```
 
-Then serve the demo (any static server works):
+Then serve the demo using the included script (it assembles `pkg/` next to `index.html`,
+mirroring how the CI deployment works):
 
 ```bash
-cd examples/browser-demo
-python3 -m http.server 8080
+./examples/browser-demo/serve.sh
 # open http://localhost:8080
 ```
 
