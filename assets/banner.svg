@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" role="img" aria-label="needle-rs — a working AI agent in 258 KB of WebAssembly">
+  <defs>
+    <!-- Hex gradient (Rust palette) -->
+    <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E8633F"/>
+      <stop offset="55%" stop-color="#CE422B"/>
+      <stop offset="100%" stop-color="#A8341F"/>
+    </linearGradient>
+    <linearGradient id="hexShine" x1="25%" y1="0%" x2="75%" y2="60%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Radial glow behind hex -->
+    <radialGradient id="bgGlow" cx="18%" cy="35%" r="40%">
+      <stop offset="0%" stop-color="#CE422B" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#CE422B" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Faint dotted grid pattern for "WASM/binary" texture -->
+    <pattern id="dotGrid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#21262D"/>
+    </pattern>
+    <mask id="needleEye">
+      <rect width="100%" height="100%" fill="white"/>
+      <ellipse cx="180" cy="200" rx="4" ry="9" fill="black"/>
+    </mask>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="360" rx="16" fill="#0D1117"/>
+  <rect width="1200" height="360" rx="16" fill="url(#dotGrid)" opacity="0.5"/>
+  <rect width="1200" height="360" rx="16" fill="url(#bgGlow)"/>
+
+  <!-- Hex icon, much larger — center (180, 170), r=95 -->
+  <polygon
+    points="180,75 262.3,122.5 262.3,217.5 180,265 97.7,217.5 97.7,122.5"
+    fill="url(#hexGrad)"
+  />
+  <polygon
+    points="180,75 262.3,122.5 262.3,217.5 180,265 97.7,217.5 97.7,122.5"
+    fill="url(#hexShine)"
+  />
+  <polygon
+    points="180,75 262.3,122.5 262.3,217.5 180,265 97.7,217.5 97.7,122.5"
+    fill="none" stroke="#0D1117" stroke-width="3" stroke-linejoin="round" opacity="0.4"
+  />
+
+  <!-- Needle inside hex, scaled up; eye is a real cut-out -->
+  <path
+    d="M 180 100 L 173 128 L 173 232 L 187 232 L 187 128 Z"
+    fill="#0D1117" mask="url(#needleEye)"
+  />
+
+  <!-- Wordmark -->
+  <text x="310" y="160"
+        font-family="ui-monospace, 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace"
+        font-size="84" font-weight="700" letter-spacing="-3"
+        fill="#E6EDF3">needle<tspan fill="#CE422B">-rs</tspan></text>
+
+  <!-- Tagline (the pitch) -->
+  <text x="313" y="208"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="26" font-weight="500" fill="#C9D1D9" letter-spacing="-0.3">A working AI agent in <tspan fill="#E8633F" font-weight="600">258 KB</tspan> of WebAssembly.</text>
+
+  <!-- Sub-tagline -->
+  <text x="313" y="242"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="16" font-weight="400" fill="#7D8590">Pure-Rust runtime for Cactus's Needle — runs in browsers, on embedded hardware, anywhere with a WASM engine.</text>
+
+  <!-- Stat cards along the bottom -->
+  <!-- Card 1: 258 KB Runtime -->
+  <g transform="translate(310, 274)">
+    <rect width="180" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
+    <text x="16" y="28"
+          font-family="ui-monospace, 'JetBrains Mono', monospace"
+          font-size="22" font-weight="600" fill="#E6EDF3">258 <tspan font-size="13" fill="#7D8590">KB</tspan></text>
+    <text x="16" y="46"
+          font-family="ui-monospace, monospace" font-size="10" font-weight="500"
+          fill="#6E7681" letter-spacing="1.5">RUNTIME</text>
+  </g>
+
+  <!-- Card 2: 22 MB Weights -->
+  <g transform="translate(500, 274)">
+    <rect width="180" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
+    <text x="16" y="28"
+          font-family="ui-monospace, monospace"
+          font-size="22" font-weight="600" fill="#E6EDF3">22 <tspan font-size="13" fill="#7D8590">MB</tspan></text>
+    <text x="16" y="46"
+          font-family="ui-monospace, monospace" font-size="10" font-weight="500"
+          fill="#6E7681" letter-spacing="1.5">WEIGHTS</text>
+  </g>
+
+  <!-- Card 3: 283 ms Per call -->
+  <g transform="translate(690, 274)">
+    <rect width="180" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
+    <text x="16" y="28"
+          font-family="ui-monospace, monospace"
+          font-size="22" font-weight="600" fill="#E6EDF3">283 <tspan font-size="13" fill="#7D8590">MS</tspan></text>
+    <text x="16" y="46"
+          font-family="ui-monospace, monospace" font-size="10" font-weight="500"
+          fill="#6E7681" letter-spacing="1.5">PER CALL</text>
+  </g>
+
+  <!-- Card 4: 560/560 Parity -->
+  <g transform="translate(880, 274)">
+    <rect width="220" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
+    <text x="16" y="28"
+          font-family="ui-monospace, monospace"
+          font-size="22" font-weight="600" fill="#7EE787">560/560</text>
+    <text x="16" y="46"
+          font-family="ui-monospace, monospace" font-size="10" font-weight="500"
+          fill="#6E7681" letter-spacing="1.5">TOKEN-EXACT PARITY</text>
+  </g>
+</svg>

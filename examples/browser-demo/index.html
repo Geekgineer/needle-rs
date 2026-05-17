@@ -3,47 +3,174 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>needle-rs — in-browser tool-calling demo</title>
+  <title>needle-rs — tool-calling AI, 258 KB, in your browser</title>
+  <meta name="description" content="A 26M-parameter tool-calling transformer running entirely client-side. Pure-Rust + WebAssembly runtime for Cactus's Needle model. No server, no API key, no data leaving your device." />
+
+  <!-- Open Graph / Twitter -->
+  <meta property="og:title" content="needle-rs — tool-calling AI in 258 KB of WebAssembly" />
+  <meta property="og:description" content="A 26M-parameter tool-calling transformer running entirely in your browser. No server, no API key." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://needle-rs.pages.dev" />
+  <meta name="twitter:card" content="summary_large_image" />
+
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://huggingface.co" />
+  <link rel="dns-prefetch" href="https://huggingface.co" />
+
   <style>
-    pre { white-space: pre-wrap; word-break: break-all; }
-    .token-stream span { animation: fadein 0.1s ease-in; }
-    @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    code, pre, .mono { font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    .stream-token { animation: fadein 0.08s ease-in; }
+    @keyframes fadein { from { opacity: 0; transform: translateY(1px); } to { opacity: 1; transform: none; } }
+
+    /* Progress bar fill */
+    .progress-fill {
+      transition: width 0.15s ease-out;
+      background: linear-gradient(90deg, #CE422B 0%, #E8633F 100%);
+    }
+    /* Subtle hex accent */
+    .hex-accent {
+      background: radial-gradient(ellipse at 30% 30%, rgba(206,66,43,0.18), transparent 60%);
+    }
+    /* Code block with line-no */
+    .stat-card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+    }
+    /* Pulse for the "ready" pill */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+    /* Example chips */
+    .chip {
+      transition: all 0.15s;
+    }
+    .chip:hover:not(:disabled) {
+      border-color: #CE422B;
+      background-color: rgba(206, 66, 43, 0.08);
+    }
+    .chip:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
-  <div class="max-w-2xl mx-auto px-4 py-10">
+<body class="bg-[#0D1117] text-gray-100 min-h-screen antialiased">
+  <div class="hex-accent absolute inset-x-0 top-0 h-96 pointer-events-none"></div>
 
-    <header class="mb-8">
-      <h1 class="text-2xl font-bold text-white">needle-rs</h1>
-      <p class="text-gray-400 mt-1 text-sm">
-        Pure-Rust runtime for
-        <a href="https://github.com/cactus-compute/needle" class="text-blue-400 hover:underline" target="_blank">
-          Needle by Cactus Compute</a>
-        — running entirely in your browser.
-        <br>258 KB WASM · 22 MB weights (loaded once, cached) · no server.
+  <div class="relative max-w-3xl mx-auto px-5 py-12 sm:py-16">
+
+    <!-- ========== HERO ========== -->
+    <header class="mb-10">
+      <div class="flex items-center gap-3 mb-5">
+        <svg width="40" height="40" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#E8633F"/>
+              <stop offset="55%" stop-color="#CE422B"/>
+              <stop offset="100%" stop-color="#A8341F"/>
+            </linearGradient>
+            <mask id="eye">
+              <rect width="100%" height="100%" fill="white"/>
+              <ellipse cx="60" cy="72" rx="1.6" ry="3.4" fill="black"/>
+            </mask>
+          </defs>
+          <polygon points="60,26 89.4,43 89.4,77 60,94 30.6,77 30.6,43" fill="url(#hg)"/>
+          <path d="M 60 36 L 57.5 46 L 57.5 82 L 62.5 82 L 62.5 46 Z" fill="#0D1117" mask="url(#eye)"/>
+        </svg>
+        <div>
+          <h1 class="mono text-2xl sm:text-3xl font-semibold tracking-tight">
+            needle<span class="text-[#CE422B]">-rs</span>
+          </h1>
+          <p class="text-xs text-gray-500 mono tracking-wider mt-0.5">TOOL CALLING · WASM · NO_STD</p>
+        </div>
+      </div>
+
+      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-tight">
+        A working AI agent in <span class="text-[#E8633F]">258 KB</span> of WebAssembly.
+      </h2>
+      <p class="text-gray-400 mt-3 leading-relaxed text-[15px]">
+        Below is a 26M-parameter tool-calling transformer running entirely in this tab — no server,
+        no API key, no data leaving your device. The model is
+        <a href="https://github.com/cactus-compute/needle" class="text-gray-300 underline decoration-gray-600 hover:decoration-gray-300" target="_blank" rel="noopener">Needle</a>
+        by Cactus Compute;
+        <a href="https://github.com/geekgineer/needle-rs" class="text-gray-300 underline decoration-gray-600 hover:decoration-gray-300" target="_blank" rel="noopener">needle-rs</a>
+        is the pure-Rust runtime that makes it deployable here.
       </p>
+
+      <!-- Spec cards -->
+      <div class="grid grid-cols-3 gap-2 mt-6">
+        <div class="stat-card border border-gray-800 rounded-lg px-3 py-2.5">
+          <div class="mono text-lg font-semibold text-white">258 <span class="text-xs text-gray-500">KB</span></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Runtime</div>
+        </div>
+        <div class="stat-card border border-gray-800 rounded-lg px-3 py-2.5">
+          <div class="mono text-lg font-semibold text-white">22 <span class="text-xs text-gray-500">MB</span></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Weights</div>
+        </div>
+        <div class="stat-card border border-gray-800 rounded-lg px-3 py-2.5">
+          <div class="mono text-lg font-semibold text-white">~280 <span class="text-xs text-gray-500">ms</span></div>
+          <div class="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Per call</div>
+        </div>
+      </div>
     </header>
 
-    <!-- Load model -->
-    <section id="load-section" class="mb-6">
+    <!-- ========== STATUS PILL ========== -->
+    <div id="status-pill" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-800 bg-gray-900/60 mb-4 text-xs">
+      <span id="status-dot" class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+      <span id="status-text" class="text-gray-400 mono">model not loaded</span>
+    </div>
+
+    <!-- ========== LOAD ========== -->
+    <section id="load-section" class="mb-8">
       <button id="load-btn"
-        class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-semibold transition">
-        Load model (22 MB)
+        class="w-full sm:w-auto bg-[#CE422B] hover:bg-[#E8633F] text-white px-5 py-2.5 rounded-md text-sm font-semibold transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed">
+        Load model (22 MB, cached after first run)
       </button>
-      <span id="load-status" class="ml-3 text-gray-400 text-sm"></span>
+
+      <!-- Progress -->
+      <div id="progress-wrapper" class="hidden mt-3">
+        <div class="flex justify-between text-xs text-gray-500 mono mb-1">
+          <span id="progress-label">Downloading weights…</span>
+          <span id="progress-bytes">0 / 22 MB</span>
+        </div>
+        <div class="w-full bg-gray-900 rounded-full h-1 overflow-hidden">
+          <div id="progress-fill" class="progress-fill h-1 rounded-full" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <p class="text-xs text-gray-600 mt-2">
+        Weights are streamed from
+        <a href="https://huggingface.co/Abdalrahman/needle-rs-safetensors" class="underline hover:text-gray-400" target="_blank" rel="noopener">HuggingFace</a>
+        and cached by your browser. One-time download.
+      </p>
     </section>
 
-    <!-- Query input -->
-    <section id="query-section" class="mb-4 hidden">
-      <label class="block text-xs text-gray-500 mb-1">Query</label>
-      <input id="query-input" type="text"
-        value="What is the weather in Paris?"
-        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+    <!-- ========== QUERY ========== -->
+    <section id="query-section" class="mb-8 hidden">
+      <!-- Example chips -->
+      <div class="mb-4">
+        <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Try an example</div>
+        <div class="flex flex-wrap gap-1.5" id="examples">
+          <!-- populated by JS -->
+        </div>
+      </div>
 
-      <label class="block text-xs text-gray-500 mt-3 mb-1">Tool definition (JSON)</label>
-      <textarea id="tools-input" rows="8"
-        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500">[{
+      <div class="grid grid-cols-1 gap-4">
+        <div>
+          <label class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">Query</label>
+          <input id="query-input" type="text"
+            value="What's the weather in Paris in fahrenheit?"
+            class="w-full bg-gray-900 border border-gray-800 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:border-[#CE422B] transition-colors" />
+        </div>
+
+        <div>
+          <div class="flex justify-between items-baseline mb-1.5">
+            <label class="block text-[10px] text-gray-500 uppercase tracking-wider">Tools (JSON)</label>
+            <span class="text-[10px] text-gray-600 mono">OpenAI-compatible</span>
+          </div>
+          <textarea id="tools-input" rows="10"
+            class="w-full bg-gray-900 border border-gray-800 rounded-md px-3 py-2.5 text-[13px] mono focus:outline-none focus:border-[#CE422B] transition-colors leading-relaxed">[{
   "name": "get_weather",
   "description": "Get current weather for a city",
   "parameters": {
@@ -54,130 +181,358 @@
     }
   }
 }]</textarea>
+        </div>
+      </div>
 
       <button id="run-btn"
-        class="mt-3 bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold transition">
-        Run inference
+        class="mt-4 w-full sm:w-auto bg-[#CE422B] hover:bg-[#E8633F] text-white px-5 py-2.5 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        Run inference →
       </button>
     </section>
 
-    <!-- Output -->
-    <section id="output-section" class="hidden">
-      <label class="block text-xs text-gray-500 mb-1">Output</label>
+    <!-- ========== OUTPUT ========== -->
+    <section id="output-section" class="hidden mb-8">
+      <div class="flex justify-between items-baseline mb-1.5">
+        <label class="block text-[10px] text-gray-500 uppercase tracking-wider">Output</label>
+        <span id="timing" class="text-[10px] text-gray-500 mono"></span>
+      </div>
       <pre id="output-box"
-        class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-green-400 min-h-12"></pre>
-      <p id="timing" class="text-xs text-gray-600 mt-1"></p>
+        class="bg-gray-900 border border-gray-800 rounded-md px-3 py-3 text-[13px] mono text-[#7EE787] min-h-[3rem] leading-relaxed"></pre>
     </section>
 
-    <footer class="mt-12 text-xs text-gray-600 border-t border-gray-800 pt-4">
+    <!-- ========== INSTALL ========== -->
+    <section class="mb-10 mt-12 pt-10 border-t border-gray-900">
+      <h3 class="text-sm font-semibold text-white mb-3 mono">Use it in your own project</h3>
+      <div class="space-y-2">
+        <div class="bg-gray-900 border border-gray-800 rounded px-3 py-2 mono text-[13px]">
+          <span class="text-gray-500 select-none">$ </span><span class="text-gray-200">npm install needle-rs</span>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded px-3 py-2 mono text-[13px]">
+          <span class="text-gray-500 select-none">$ </span><span class="text-gray-200">cargo add needle-infer</span>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 rounded px-3 py-2 mono text-[13px]">
+          <span class="text-gray-500 select-none">// </span><span class="text-gray-200">Python: use via C FFI — see examples/python-via-cffi/</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FOOTER ========== -->
+    <footer class="text-xs text-gray-600 border-t border-gray-900 pt-6 leading-relaxed">
       <p>
-        Model: <a href="https://github.com/cactus-compute/needle" class="text-gray-400 hover:underline" target="_blank">Needle by Cactus Compute</a> (MIT) —
-        all training and weights are their work.<br>
-        Runtime: <a href="https://github.com/geekgineer/needle-rs" class="text-gray-400 hover:underline" target="_blank">needle-rs</a> (MIT) —
-        pure-Rust + WASM inference by Abdalrahman Ibrahim.
+        Model: <a href="https://github.com/cactus-compute/needle" class="text-gray-400 hover:text-gray-200 underline decoration-gray-700" target="_blank" rel="noopener">Needle</a>
+        by Cactus Compute — all training, architecture, and weights are their work (MIT).<br/>
+        Runtime: <a href="https://github.com/geekgineer/needle-rs" class="text-gray-400 hover:text-gray-200 underline decoration-gray-700" target="_blank" rel="noopener">needle-rs</a>
+        — pure-Rust + WASM inference by Abdalrahman Ibrahim (MIT).
+      </p>
+      <p class="mt-3">
+        <a href="https://github.com/geekgineer/needle-rs" class="text-gray-500 hover:text-gray-300" target="_blank" rel="noopener">★ Star on GitHub</a>
+        <span class="text-gray-800 mx-2">·</span>
+        <a href="https://github.com/cactus-compute/needle" class="text-gray-500 hover:text-gray-300" target="_blank" rel="noopener">★ Star upstream</a>
       </p>
     </footer>
   </div>
 
   <script type="module">
-    // Weights are loaded from HuggingFace (CORS-enabled).
-    // The WASM module is served from ./pkg/.
-    const HF_WEIGHTS_URL =
-      "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main/needle.safetensors";
-    const HF_VOCAB_URL =
-      "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main/vocab.txt";
+    // ============================================================
+    // Configuration
+    // ============================================================
+    const HF_BASE = "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main";
+    const WEIGHTS_URL = `${HF_BASE}/needle.safetensors`;
+    const VOCAB_URL = `${HF_BASE}/vocab.txt`;
 
-    const loadBtn = document.getElementById("load-btn");
-    const loadStatus = document.getElementById("load-status");
-    const querySection = document.getElementById("query-section");
-    const runBtn = document.getElementById("run-btn");
-    const outputSection = document.getElementById("output-section");
-    const outputBox = document.getElementById("output-box");
-    const timingEl = document.getElementById("timing");
+    // Example payloads — chosen to show range:
+    //  - simple single-tool extraction
+    //  - multi-tool routing (model picks the right one)
+    //  - parameter-less call (gets time)
+    //  - schema-style with enums
+    const EXAMPLES = [
+      {
+        label: "Weather",
+        query: "What's the weather in Paris in fahrenheit?",
+        tools: [{
+          name: "get_weather",
+          description: "Get current weather for a city",
+          parameters: {
+            type: "object",
+            properties: {
+              location: { type: "string", description: "City name" },
+              unit: { type: "string", description: "celsius or fahrenheit" }
+            }
+          }
+        }]
+      },
+      {
+        label: "Flight booking",
+        query: "Book me a flight from London to JFK tomorrow morning",
+        tools: [{
+          name: "book_flight",
+          description: "Book a flight",
+          parameters: {
+            type: "object",
+            properties: {
+              origin: { type: "string" },
+              destination: { type: "string" },
+              date: { type: "string" }
+            }
+          }
+        }]
+      },
+      {
+        label: "Multi-tool",
+        query: "Turn the lights off in the bedroom",
+        tools: [
+          { name: "get_weather", description: "Get current weather", parameters: { type: "object", properties: { location: { type: "string" } } } },
+          { name: "play_music", description: "Play a song", parameters: { type: "object", properties: { song: { type: "string" } } } },
+          { name: "control_lights", description: "Turn lights on/off in a room", parameters: { type: "object", properties: { room: { type: "string" }, state: { type: "string" } } } },
+          { name: "send_message", description: "Send a text message", parameters: { type: "object", properties: { recipient: { type: "string" }, body: { type: "string" } } } }
+        ]
+      },
+      {
+        label: "No params",
+        query: "What time is it?",
+        tools: [{
+          name: "get_current_time",
+          description: "Get the current time",
+          parameters: { type: "object", properties: {} }
+        }]
+      },
+      {
+        label: "Search",
+        query: "Find me Italian restaurants near Trafalgar Square under £30",
+        tools: [{
+          name: "search_restaurants",
+          description: "Search for restaurants",
+          parameters: {
+            type: "object",
+            properties: {
+              cuisine: { type: "string" },
+              location: { type: "string" },
+              max_price: { type: "string" }
+            }
+          }
+        }]
+      }
+    ];
 
+    // ============================================================
+    // DOM
+    // ============================================================
+    const $ = (id) => document.getElementById(id);
+    const loadBtn = $("load-btn");
+    const progressWrapper = $("progress-wrapper");
+    const progressLabel = $("progress-label");
+    const progressBytes = $("progress-bytes");
+    const progressFill = $("progress-fill");
+    const statusDot = $("status-dot");
+    const statusText = $("status-text");
+    const querySection = $("query-section");
+    const runBtn = $("run-btn");
+    const outputSection = $("output-section");
+    const outputBox = $("output-box");
+    const timingEl = $("timing");
+    const queryInput = $("query-input");
+    const toolsInput = $("tools-input");
+    const examplesContainer = $("examples");
+
+    // ============================================================
+    // State
+    // ============================================================
     let engine = null;
 
-    async function loadWithProgress(url, label) {
+    // ============================================================
+    // UI helpers
+    // ============================================================
+    function setStatus(state, text) {
+      statusText.textContent = text;
+      statusDot.classList.remove("bg-gray-500", "bg-yellow-500", "bg-green-500", "bg-red-500", "pulse-dot");
+      if (state === "loading") statusDot.classList.add("bg-yellow-500", "pulse-dot");
+      else if (state === "ready") statusDot.classList.add("bg-green-500");
+      else if (state === "error") statusDot.classList.add("bg-red-500");
+      else statusDot.classList.add("bg-gray-500");
+    }
+
+    function formatMB(bytes) {
+      return (bytes / 1024 / 1024).toFixed(1);
+    }
+
+    function renderExamples() {
+      EXAMPLES.forEach((ex, i) => {
+        const btn = document.createElement("button");
+        btn.className = "chip text-xs px-2.5 py-1 rounded border border-gray-800 bg-gray-900/40 text-gray-300 mono";
+        btn.textContent = ex.label;
+        btn.disabled = true; // enabled after load
+        btn.dataset.idx = i;
+        btn.addEventListener("click", () => {
+          queryInput.value = ex.query;
+          toolsInput.value = JSON.stringify(ex.tools, null, 2);
+        });
+        examplesContainer.appendChild(btn);
+      });
+    }
+
+    function enableExamples() {
+      examplesContainer.querySelectorAll("button").forEach(b => b.disabled = false);
+    }
+
+    // ============================================================
+    // Load with progress
+    // ============================================================
+    async function loadWithProgress(url, label, totalHintBytes = 0) {
       const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`Failed to fetch ${label}: ${resp.status}`);
-      const total = parseInt(resp.headers.get("content-length") || "0");
+      if (!resp.ok) throw new Error(`Fetch failed: ${label} (${resp.status})`);
+
+      const total = parseInt(resp.headers.get("content-length") || "0") || totalHintBytes;
       const reader = resp.body.getReader();
       const chunks = [];
       let loaded = 0;
+
+      progressWrapper.classList.remove("hidden");
+      progressLabel.textContent = `Downloading ${label.toLowerCase()}…`;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
         loaded += value.length;
         if (total) {
-          loadStatus.textContent =
-            `${label}: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`;
+          progressBytes.textContent = `${formatMB(loaded)} / ${formatMB(total)} MB`;
+          progressFill.style.width = `${(loaded / total) * 100}%`;
+        } else {
+          progressBytes.textContent = `${formatMB(loaded)} MB`;
         }
       }
+
       const buf = new Uint8Array(loaded);
       let offset = 0;
       for (const chunk of chunks) { buf.set(chunk, offset); offset += chunk.length; }
       return buf;
     }
 
+    // ============================================================
+    // Load model
+    // ============================================================
     loadBtn.addEventListener("click", async () => {
       loadBtn.disabled = true;
       loadBtn.textContent = "Loading…";
+      setStatus("loading", "initializing wasm");
+
       try {
-        // Load WASM module
-        loadStatus.textContent = "Initializing WASM…";
         const { default: init, NeedleWasm } = await import("./pkg/needle_wasm.js");
         await init();
 
-        // Fetch weights + vocab from HuggingFace
-        const weightsBytes = await loadWithProgress(HF_WEIGHTS_URL, "Weights");
-        loadStatus.textContent = "Fetching vocabulary…";
-        const vocabBytes = await loadWithProgress(HF_VOCAB_URL, "Vocab");
+        setStatus("loading", "downloading weights");
+        const weightsBytes = await loadWithProgress(WEIGHTS_URL, "Weights", 22 * 1024 * 1024);
+
+        setStatus("loading", "downloading vocab");
+        const vocabBytes = await loadWithProgress(VOCAB_URL, "Vocab", 120 * 1024);
         const vocabText = new TextDecoder().decode(vocabBytes);
 
-        loadStatus.textContent = "Loading model…";
+        setStatus("loading", "initializing model");
+        const t0 = performance.now();
         engine = NeedleWasm.load(weightsBytes, vocabText);
+        const initMs = (performance.now() - t0).toFixed(0);
 
-        loadStatus.textContent = "Model ready.";
-        loadBtn.textContent = "Model loaded";
+        progressWrapper.classList.add("hidden");
+        loadBtn.classList.add("hidden");
         querySection.classList.remove("hidden");
+        setStatus("ready", `model ready · init ${initMs} ms`);
+        enableExamples();
+        queryInput.focus();
       } catch (e) {
-        loadStatus.textContent = "Error: " + e.message;
+        console.error(e);
+        setStatus("error", "load failed");
+        progressLabel.textContent = "Error: " + e.message;
         loadBtn.disabled = false;
         loadBtn.textContent = "Retry";
       }
     });
 
-    document.getElementById("query-input").addEventListener("keydown", (e) => {
+    // ============================================================
+    // Run inference
+    // ============================================================
+    queryInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !runBtn.disabled) runBtn.click();
     });
 
     runBtn.addEventListener("click", () => {
       if (!engine) return;
-      const query = document.getElementById("query-input").value.trim();
-      const tools = document.getElementById("tools-input").value.trim();
 
+      const query = queryInput.value.trim();
+      const tools = toolsInput.value.trim();
+      if (!query || !tools) return;
+
+      // Validate tools JSON before hitting WASM (gives a nicer error message)
+      try { JSON.parse(tools); } catch (e) {
+        outputSection.classList.remove("hidden");
+        outputBox.className = "bg-gray-900 border border-gray-800 rounded-md px-3 py-3 text-[13px] mono text-red-400 min-h-[3rem] leading-relaxed";
+        outputBox.textContent = "Invalid tools JSON: " + e.message;
+        timingEl.textContent = "";
+        return;
+      }
+
+      // Reset output state (clear any previous error colour)
       outputSection.classList.remove("hidden");
+      outputBox.className = "bg-gray-900 border border-gray-800 rounded-md px-3 py-3 text-[13px] mono text-[#7EE787] min-h-[3rem] leading-relaxed";
       outputBox.textContent = "";
-      timingEl.textContent = "";
+      timingEl.textContent = "running…";
       runBtn.disabled = true;
+      runBtn.textContent = "Running…";
 
       const t0 = performance.now();
+      let firstTokenMs = null;
+      let tokenCount = 0;
+      let finalResult = "";
+      const pieces = [];
+
+      // run_stream is synchronous — collect pieces, then animate them so the
+      // fade-in transition is actually visible to the user.
       try {
-        // Streaming: append each token piece as it arrives
-        const result = engine.run_stream(query, tools, (_id, piece) => {
-          const span = document.createElement("span");
-          span.textContent = piece;
-          outputBox.appendChild(span);
+        finalResult = engine.run_stream(query, tools, (_id, piece) => {
+          if (firstTokenMs === null) firstTokenMs = performance.now() - t0;
+          tokenCount++;
+          pieces.push(piece);
         });
-        const ms = (performance.now() - t0).toFixed(0);
-        timingEl.textContent = `${ms} ms`;
-        outputBox.textContent = result; // final post-processed output
       } catch (e) {
+        outputBox.className = "bg-gray-900 border border-gray-800 rounded-md px-3 py-3 text-[13px] mono text-red-400 min-h-[3rem] leading-relaxed";
         outputBox.textContent = "Error: " + e.message;
+        timingEl.textContent = "";
+        runBtn.disabled = false;
+        runBtn.textContent = "Run inference →";
+        return;
       }
-      runBtn.disabled = false;
+
+      const totalMs = performance.now() - t0;
+      const tps = (tokenCount / (totalMs / 1000)).toFixed(0);
+      timingEl.textContent =
+        `${totalMs.toFixed(0)} ms · ${firstTokenMs?.toFixed(0) ?? "?"} ms to first token · ${tokenCount} tokens · ${tps} tok/s`;
+
+      // Drip pieces one per animation frame so the fade-in actually renders
+      let idx = 0;
+      function drip() {
+        if (idx < pieces.length) {
+          const span = document.createElement("span");
+          span.className = "stream-token";
+          span.textContent = pieces[idx++];
+          outputBox.appendChild(span);
+          requestAnimationFrame(drip);
+        } else {
+          // Replace raw token stream with clean pretty-printed JSON
+          try {
+            outputBox.textContent = JSON.stringify(JSON.parse(finalResult), null, 2);
+          } catch {
+            outputBox.textContent = finalResult;
+          }
+          runBtn.disabled = false;
+          runBtn.textContent = "Run inference →";
+        }
+      }
+      requestAnimationFrame(drip);
     });
+
+    // ============================================================
+    // Init
+    // ============================================================
+    renderExamples();
   </script>
 </body>
 </html>

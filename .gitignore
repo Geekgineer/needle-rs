@@ -1,6 +1,6 @@
 /target/
 weights/
-needle/checkpoints/
+needle/
 *.pkl
 *.safetensors
 __pycache__/
@@ -9,3 +9,4 @@ __pycache__/
 CLAUDE.md
 whatweneedtodo.md
 pkg-nodejs/
+tests/e2e_vectors.json
