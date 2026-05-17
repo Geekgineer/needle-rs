@@ -5,6 +5,7 @@ members = [
     "crates/needle-c",
     "crates/needle-wasm",
     "crates/needle-cli",
+    "crates/needle-python",
 ]
 resolver = "2"
 

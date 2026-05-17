@@ -1,0 +1,16 @@
+[package]
+name = "needle-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Python bindings for needle-rs (PyO3)"
+repository = "https://github.com/geekgineer/needle-rs"
+
+[lib]
+name = "needle_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+needle-infer = { path = "../needle-infer" }
+pyo3 = { version = "0.21", features = ["extension-module"] }

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "needle-rs"
+version = "0.1.0"
+description = "Pure-Rust + WebAssembly runtime for Needle — a 26M-parameter tool-calling transformer"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["tool-calling", "function-calling", "ai", "wasm", "rust", "on-device"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/geekgineer/needle-rs"
+Repository = "https://github.com/geekgineer/needle-rs"
+
+[tool.maturin]
+manifest-path = "crates/needle-python/Cargo.toml"
+python-source = "python"
+module-name = "needle_rs"
+features = ["pyo3/extension-module"]
