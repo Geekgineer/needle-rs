@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 120" width="460" height="120">
+  <defs>
+    <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e05a3a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#CE422B;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="hexInner" x1="30%" y1="0%" x2="70%" y2="100%">
+      <stop offset="0%" style="stop-color:#f07050;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#CE422B;stop-opacity:0" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background card -->
+  <rect width="460" height="120" rx="12" ry="12" fill="#0d1117"/>
+
+  <!-- Hex icon (pointy-top, flat sides) centered at (62, 60) r=34 -->
+  <!-- Pointy-top hex vertices: (cx, cy-r), (cx+r*sin60, cy-r/2), (cx+r*sin60, cy+r/2), (cx, cy+r), (cx-r*sin60, cy+r/2), (cx-r*sin60, cy-r/2) -->
+  <!-- sin60 ≈ 0.866, r=34: offsets = 29.4, 17 -->
+  <polygon
+    points="62,26 91.4,43 91.4,77 62,94 32.6,77 32.6,43"
+    fill="url(#hexGrad)"
+    filter="url(#glow)"
+  />
+  <!-- Inner highlight overlay -->
+  <polygon
+    points="62,26 91.4,43 91.4,77 62,94 32.6,77 32.6,43"
+    fill="url(#hexInner)"
+  />
+  <!-- Needle icon inside hex: a thin vertical line with a pointed top (stylized needle) -->
+  <line x1="62" y1="40" x2="62" y2="78" stroke="#0d1117" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="62,36 58,46 66,46" fill="#0d1117"/>
+  <!-- Eye of needle (small oval) -->
+  <ellipse cx="62" cy="68" rx="4.5" ry="2.5" fill="none" stroke="#0d1117" stroke-width="1.8"/>
+
+  <!-- Wordmark -->
+  <text
+    x="108"
+    y="58"
+    font-family="ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Source Code Pro', Consolas, monospace"
+    font-size="38"
+    font-weight="600"
+    letter-spacing="-0.5"
+    fill="#e6edf3"
+  >needle</text>
+  <text
+    x="108"
+    y="58"
+    font-family="ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Source Code Pro', Consolas, monospace"
+    font-size="38"
+    font-weight="600"
+    letter-spacing="-0.5"
+    fill="transparent"
+    textLength="0"
+  > </text>
+  <!-- "-rs" suffix — need to offset past "needle" width -->
+  <!-- "needle" at 38px monospace ≈ 6 chars × ~22.8px = 136.8px, so -rs starts at 108+137=245 -->
+  <text
+    x="245"
+    y="58"
+    font-family="ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Source Code Pro', Consolas, monospace"
+    font-size="38"
+    font-weight="600"
+    letter-spacing="-0.5"
+    fill="#CE422B"
+  >-rs</text>
+
+  <!-- Tagline -->
+  <text
+    x="108"
+    y="82"
+    font-family="ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Source Code Pro', Consolas, monospace"
+    font-size="13.5"
+    font-weight="400"
+    fill="#8b949e"
+    letter-spacing="0.3"
+  >258 KB · WASM · no_std · tool calling</text>
+</svg>

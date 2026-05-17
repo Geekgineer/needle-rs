@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >
+  If you use needle-rs in your work, please cite both this runtime and the
+  original Needle model by Cactus Compute.
+title: "needle-rs: Pure-Rust + WASM runtime for the Needle tool-calling model"
+authors:
+  - family-names: Ibrahim
+    given-names: Abdalrahman
+version: 0.1.0
+date-released: 2026-05-17
+url: https://github.com/geekgineer/needle-rs
+license: MIT
+repository-code: https://github.com/geekgineer/needle-rs
+
+references:
+  - type: software
+    title: "Needle: A 26M-Parameter Tool-Calling Transformer"
+    authors:
+      - family-names: Ndubuaku
+        given-names: Henry
+      - name: "Cactus Compute"
+    year: 2026
+    url: https://github.com/cactus-compute/needle
+    license: MIT
+    notes: >
+      needle-rs is a deployment runtime for the Needle model. The model
+      architecture, training, and weights are entirely the work of Cactus
+      Compute. This runtime adds pure-Rust inference, WASM packaging, C ABI,
+      and INT4 quantization for browser and embedded deployment.

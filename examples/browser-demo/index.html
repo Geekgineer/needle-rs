@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>needle-rs — in-browser tool-calling demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    pre { white-space: pre-wrap; word-break: break-all; }
+    .token-stream span { animation: fadein 0.1s ease-in; }
+    @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
+  <div class="max-w-2xl mx-auto px-4 py-10">
+
+    <header class="mb-8">
+      <h1 class="text-2xl font-bold text-white">needle-rs</h1>
+      <p class="text-gray-400 mt-1 text-sm">
+        Pure-Rust runtime for
+        <a href="https://github.com/cactus-compute/needle" class="text-blue-400 hover:underline" target="_blank">
+          Needle by Cactus Compute</a>
+        — running entirely in your browser.
+        <br>260 KB WASM · 22 MB weights (loaded once, cached) · no server.
+      </p>
+    </header>
+
+    <!-- Load model -->
+    <section id="load-section" class="mb-6">
+      <button id="load-btn"
+        class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-semibold transition">
+        Load model (22 MB)
+      </button>
+      <span id="load-status" class="ml-3 text-gray-400 text-sm"></span>
+    </section>
+
+    <!-- Query input -->
+    <section id="query-section" class="mb-4 hidden">
+      <label class="block text-xs text-gray-500 mb-1">Query</label>
+      <input id="query-input" type="text"
+        value="What is the weather in Paris?"
+        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+
+      <label class="block text-xs text-gray-500 mt-3 mb-1">Tool definition (JSON)</label>
+      <textarea id="tools-input" rows="8"
+        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500">[{
+  "name": "get_weather",
+  "description": "Get current weather for a city",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "location": {"type": "string", "description": "City name"},
+      "unit": {"type": "string", "description": "celsius or fahrenheit"}
+    }
+  }
+}]</textarea>
+
+      <button id="run-btn"
+        class="mt-3 bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold transition">
+        Run inference
+      </button>
+    </section>
+
+    <!-- Output -->
+    <section id="output-section" class="hidden">
+      <label class="block text-xs text-gray-500 mb-1">Output</label>
+      <pre id="output-box"
+        class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-green-400 min-h-12"></pre>
+      <p id="timing" class="text-xs text-gray-600 mt-1"></p>
+    </section>
+
+    <footer class="mt-12 text-xs text-gray-600 border-t border-gray-800 pt-4">
+      <p>
+        Model: <a href="https://github.com/cactus-compute/needle" class="text-gray-400 hover:underline" target="_blank">Needle by Cactus Compute</a> (MIT) —
+        all training and weights are their work.<br>
+        Runtime: <a href="https://github.com/geekgineer/needle-rs" class="text-gray-400 hover:underline" target="_blank">needle-rs</a> (MIT) —
+        pure-Rust + WASM inference by Abdalrahman Ibrahim.
+      </p>
+    </footer>
+  </div>
+
+  <script type="module">
+    // Weights are loaded from HuggingFace (CORS-enabled).
+    // The WASM module is served from ./pkg/.
+    const HF_WEIGHTS_URL =
+      "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main/needle.safetensors";
+    const HF_VOCAB_URL =
+      "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main/vocab.txt";
+
+    const loadBtn = document.getElementById("load-btn");
+    const loadStatus = document.getElementById("load-status");
+    const querySection = document.getElementById("query-section");
+    const runBtn = document.getElementById("run-btn");
+    const outputSection = document.getElementById("output-section");
+    const outputBox = document.getElementById("output-box");
+    const timingEl = document.getElementById("timing");
+
+    let engine = null;
+
+    async function loadWithProgress(url, label) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Failed to fetch ${label}: ${resp.status}`);
+      const total = parseInt(resp.headers.get("content-length") || "0");
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (total) {
+          loadStatus.textContent =
+            `${label}: ${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`;
+        }
+      }
+      const buf = new Uint8Array(loaded);
+      let offset = 0;
+      for (const chunk of chunks) { buf.set(chunk, offset); offset += chunk.length; }
+      return buf;
+    }
+
+    loadBtn.addEventListener("click", async () => {
+      loadBtn.disabled = true;
+      loadBtn.textContent = "Loading…";
+      try {
+        // Load WASM module
+        loadStatus.textContent = "Initializing WASM…";
+        const { default: init, NeedleWasm } = await import("./pkg/needle_wasm.js");
+        await init();
+
+        // Fetch weights + vocab from HuggingFace
+        const weightsBytes = await loadWithProgress(HF_WEIGHTS_URL, "Weights");
+        loadStatus.textContent = "Fetching vocabulary…";
+        const vocabBytes = await loadWithProgress(HF_VOCAB_URL, "Vocab");
+        const vocabText = new TextDecoder().decode(vocabBytes);
+
+        loadStatus.textContent = "Loading model…";
+        engine = NeedleWasm.load(weightsBytes, vocabText);
+
+        loadStatus.textContent = "Model ready.";
+        loadBtn.textContent = "Model loaded";
+        querySection.classList.remove("hidden");
+      } catch (e) {
+        loadStatus.textContent = "Error: " + e.message;
+        loadBtn.disabled = false;
+        loadBtn.textContent = "Retry";
+      }
+    });
+
+    runBtn.addEventListener("click", () => {
+      if (!engine) return;
+      const query = document.getElementById("query-input").value.trim();
+      const tools = document.getElementById("tools-input").value.trim();
+
+      outputSection.classList.remove("hidden");
+      outputBox.textContent = "";
+      timingEl.textContent = "";
+      runBtn.disabled = true;
+
+      const t0 = performance.now();
+      try {
+        // Streaming: append each token piece as it arrives
+        const result = engine.run_stream(query, tools, (_id, piece) => {
+          const span = document.createElement("span");
+          span.textContent = piece;
+          outputBox.appendChild(span);
+        });
+        const ms = (performance.now() - t0).toFixed(0);
+        timingEl.textContent = `${ms} ms`;
+        outputBox.textContent = result; // final post-processed output
+      } catch (e) {
+        outputBox.textContent = "Error: " + e.message;
+      }
+      runBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

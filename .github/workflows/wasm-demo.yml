@@ -1,0 +1,53 @@
+name: WASM Demo Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.12.1 --locked
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get install -y binaryen
+
+      - name: Build WASM (web target)
+        run: wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
+
+      - name: Optimise WASM
+        run: |
+          wasm-opt -Oz \
+            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext \
+            --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
+            pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
+          echo "WASM size: $(wc -c < pkg/needle_wasm_bg.wasm) bytes"
+
+      - name: Assemble demo site
+        run: |
+          mkdir -p _site
+          cp -r examples/browser-demo/* _site/
+          cp -r pkg/ _site/pkg/
+
+      - name: Deploy to Cloudflare Pages
+        # TODO: Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to repository secrets.
+        # See: https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: needle-rs
+          directory: _site
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}

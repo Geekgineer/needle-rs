@@ -1,0 +1,50 @@
+name: Bug report
+description: Something produces wrong output or crashes
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please fill in as much detail as you can.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect vs. what did you get?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code or command that triggers the issue.
+      placeholder: |
+        ```bash
+        ./needle-rs weights/needle.safetensors weights/vocab.txt "query" '[{"name":"..."}]'
+        ```
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: needle-rs version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform / CPU
+      placeholder: "Linux x86_64, Intel i7-1185G7"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs, stack traces, or anything else relevant.

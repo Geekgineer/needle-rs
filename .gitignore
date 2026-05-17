@@ -6,3 +6,5 @@ needle/checkpoints/
 __pycache__/
 *.pyc
 .env
+CLAUDE.md
+whatweneedtodo.md

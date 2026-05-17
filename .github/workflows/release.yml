@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release binaries
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross (aarch64 Linux)
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build CLI binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release -p needle-cli --target ${{ matrix.target }}
+          else
+            cargo build --release -p needle-cli --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Build C shared library
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release -p needle-c --target ${{ matrix.target }}
+          else
+            cargo build --release -p needle-c --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          TARGET_DIR="target/${{ matrix.target }}/release"
+          TAG="${{ github.ref_name }}"
+
+          # CLI binary
+          if [ "${{ matrix.runner }}" = "windows-latest" ]; then
+            cp "$TARGET_DIR/needle-rs.exe" "dist/needle-rs-$TAG-${{ matrix.target }}.exe"
+          else
+            cp "$TARGET_DIR/needle-rs" "dist/needle-rs-$TAG-${{ matrix.target }}"
+          fi
+
+          # C shared library
+          if [ "${{ matrix.runner }}" = "windows-latest" ]; then
+            cp "$TARGET_DIR/needle_c.dll" "dist/libneedle_c-$TAG-${{ matrix.target }}.dll" 2>/dev/null || true
+          elif [ "${{ matrix.runner }}" = "macos-latest" ]; then
+            cp "$TARGET_DIR/libneedle_c.dylib" "dist/libneedle_c-$TAG-${{ matrix.target }}.dylib" 2>/dev/null || true
+          else
+            cp "$TARGET_DIR/libneedle_c.so" "dist/libneedle_c-$TAG-${{ matrix.target }}.so" 2>/dev/null || true
+          fi
+
+          # Header
+          cp crates/needle-c/include/needle.h "dist/needle-$TAG.h"
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/
+
+  wasm-artifact:
+    name: Build WASM artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install wasm-pack --version 0.12.1 --locked
+      - run: sudo apt-get install -y binaryen
+      - run: wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
+      - name: Optimise WASM
+        run: |
+          wasm-opt -Oz \
+            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext \
+            --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
+            pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
+      - name: Stage WASM
+        run: |
+          mkdir -p dist
+          TAG="${{ github.ref_name }}"
+          cp pkg/needle_wasm_bg.wasm "dist/needle_wasm-$TAG.wasm"
+          cp pkg/needle_wasm.js "dist/needle_wasm-$TAG.js"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-wasm
+          path: dist/
+
+  github-release:
+    name: Create GitHub release
+    needs: [release, wasm-artifact]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist/
+      - name: Generate checksums
+        run: sha256sum dist/* > dist/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

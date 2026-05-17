@@ -1,0 +1,6 @@
+# Runtime AVX2 dispatch is enabled by default via CPUID detection in quant.rs.
+# No special flags are needed — the binary is portable across all x86_64 CPUs.
+#
+# For a non-portable build that squeezes out a few extra percent from auto-vectorization
+# of non-matmul code (norms, softmax, etc.), you can set:
+#   RUSTFLAGS="-C target-cpu=native" cargo build --release
