@@ -269,9 +269,9 @@ jobs:
       - name: Build wheels
         run: cibuildwheel --output-dir dist
         env:
-          # Build for CPython 3.8–3.12 on x86_64 + arm64/aarch64
+          # Build for CPython 3.8–3.12; skip Linux aarch64 (QEMU emulation is too slow)
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_ARCHS_LINUX: "x86_64 aarch64"
+          CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           # maturin is the build backend; cibuildwheel invokes it via pip
