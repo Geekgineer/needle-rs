@@ -1,12 +1,25 @@
 # HuggingFace Model Card
 
 **Filename:** `README.md` in the `Abdalrahman/needle-rs-safetensors` HuggingFace repository.
-Paste this content verbatim into the model card when uploading the converted weights.
-Also upload `banner.svg` (from the needle-rs repo's `assets/`) to the same HF repo so the image at the top renders.
+
+## Upload checklist
+
+1. **Upload `banner.svg` first** (from `assets/banner.svg` in this repo) — commit it to the HF
+   repo before the README. If you commit the README first, the image will 404 on first render
+   and HF's CDN cache may stick on the broken state for hours.
+2. Verify `Cactus-Compute/needle` matches Cactus's actual HF org slug exactly
+   (`https://huggingface.co/Cactus-Compute/needle` — checked, returns 200 as of 2026-05-17).
+   If they ever rename or move the repo, update `base_model:` below before publishing.
+3. `inference: false` is correct — there is no HF Inference-compatible adapter.
+4. `library_name: needle-rs` is not a registered HF library; HF will display it as-is.
+   That is fine — it links users to the runtime.
+
+## Paste below into HF README.md (everything from the `---` onward, verbatim)
+
+The YAML front-matter must be at the very top of the file with no blank line before it.
 
 ---
 
-```yaml
 ---
 license: mit
 language:
@@ -29,7 +42,6 @@ base_model: Cactus-Compute/needle
 base_model_relation: quantized
 inference: false
 ---
-```
 
 <div align="center">
   <img src="./banner.svg" alt="needle-rs" width="100%"/>
