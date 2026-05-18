@@ -100,7 +100,7 @@ jobs:
       - name: Download weights from HuggingFace
         run: |
           pip install -q huggingface_hub
-          huggingface-cli download Abdalrahman/needle-rs-safetensors \
+          hf download Abdalrahman/needle-rs-safetensors \
             needle.safetensors vocab.txt --local-dir weights/
 
       - name: Run parity tests
