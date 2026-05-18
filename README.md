@@ -12,7 +12,7 @@
     <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml/badge.svg" alt="Release"/></a>
     <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml/badge.svg?branch=main" alt="Demo"/></a>
     <a href="#parity"><img src="https://img.shields.io/badge/parity-560%2F560%20token--exact-brightgreen?style=flat-square" alt="Parity 560/560"/></a>
-    <a href="https://crates.io/crates/needle-rs"><img src="https://img.shields.io/crates/v/needle-rs?style=flat-square&color=CE422B" alt="crates.io"/></a>
+    <a href="https://crates.io/crates/needle-infer"><img src="https://img.shields.io/crates/v/needle-infer?style=flat-square&color=CE422B" alt="crates.io"/></a>
     <a href="https://www.npmjs.com/package/needle-rs"><img src="https://img.shields.io/npm/v/needle-rs?style=flat-square&color=CE422B" alt="npm"/></a>
     <a href="https://pypi.org/project/needle-rs/"><img src="https://img.shields.io/pypi/v/needle-rs?style=flat-square&color=CE422B" alt="PyPI"/></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT"/></a>
@@ -89,6 +89,8 @@ Same answer to *"did the user ask for a flight booking?"* — at a fraction of t
 <h2 id="quick-start">
   <img src="https://img.shields.io/badge/-Quick_start-CE422B?style=flat-square" height="22" alt=""/>
 </h2>
+
+> **`needle-rs` is a community Rust + WASM runtime for [Needle](https://github.com/cactus-compute/needle) by [Cactus Compute](https://github.com/cactus-compute).** The model architecture, training procedure, dataset, and weights are entirely their work, released under MIT. This project provides a deployment layer for contexts the official Python implementation cannot reach: browsers, edge workers, embedded systems, and binary-distribution use cases. If you build with this, you are building on Cactus's Needle — please credit them.
 
 <table>
 <tr>
