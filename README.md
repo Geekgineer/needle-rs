@@ -37,8 +37,8 @@ A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute
 <br/>
 
 <!-- ────────────────────────────────────────────────── -->
-<h2>
-  <img src="https://img.shields.io/badge/-Why_this_matters-CE422B?style=flat-square" height="22" alt=""/>
+<h2 id="why-this-matters">
+  <img src="https://img.shields.io/badge/-Why_this_matters-CE422B?style=flat-square" height="22" alt="Why this matters"/>
 </h2>
 
 Tool calling usually means either a paid API call or hundreds of megabytes on disk. `needle-rs` ships the whole agent in 23 MB.
@@ -85,84 +85,56 @@ Tool calling usually means either a paid API call or hundreds of megabytes on di
 </tbody>
 </table>
 
-Same answer to *"did the user ask for a flight booking?"* — at a fraction of the footprint.
+The same routing accuracy — at a fraction of the footprint.
 
 <br/>
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="quick-start">
-  <img src="https://img.shields.io/badge/-Quick_start-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-Quick_start-CE422B?style=flat-square" height="22" alt="Quick start"/>
 </h2>
 
 > **`needle-rs` is a community Rust + WASM runtime for [Needle](https://github.com/cactus-compute/needle) by [Cactus Compute](https://github.com/cactus-compute).** The model architecture, training procedure, dataset, and weights are entirely their work, released under MIT. This project provides a deployment layer for contexts the official Python implementation cannot reach: browsers, edge workers, embedded systems, and binary-distribution use cases. If you build with this, you are building on Cactus's Needle — please credit them.
 
-<table>
-<tr>
-<td valign="top" width="33%">
-
-**Browser / Node**
-
-```bash
-npm install needle-rs
-```
+<details open>
+<summary><b>Browser / Node.js</b> &nbsp;—&nbsp; <code>npm install needle-rs</code></summary>
+<br/>
 
 ```js
 import init, { NeedleWasm } from "needle-rs";
 
 await init();
 const engine = NeedleWasm.load(weights, vocab);
-
-engine.run(
-  "Book a flight from London to JFK tomorrow",
-  toolsJson
-);
+engine.run("Book a flight from London to JFK tomorrow", toolsJson);
 // → {"name":"book_flight","arguments":{...}}
 ```
+</details>
 
-</td>
-<td valign="top" width="33%">
-
-**Rust**
-
-```bash
-cargo add needle-infer
-```
+<details open>
+<summary><b>Rust</b> &nbsp;—&nbsp; <code>cargo add needle-infer</code></summary>
+<br/>
 
 ```rust
 use needle_infer::NeedleEngine;
 
-let engine = NeedleEngine::load(
-    "needle.safetensors",
-    "vocab.txt"
-)?;
+let engine = NeedleEngine::load("needle.safetensors", "vocab.txt")?;
 let result = engine.run(query, tools_json);
 println!("{}", result.text);
 ```
+</details>
 
-</td>
-<td valign="top" width="33%">
-
-**Python**
-
-```bash
-pip install needle-rs
-```
+<details open>
+<summary><b>Python</b> &nbsp;—&nbsp; <code>pip install needle-rs</code></summary>
+<br/>
 
 ```python
 from needle_rs import NeedleEngine
 
-engine = NeedleEngine.load(
-    "needle.safetensors",
-    "vocab.txt",
-)
+engine = NeedleEngine.load("needle.safetensors", "vocab.txt")
 result = engine.run(query, tools_json)
-print(result)
 # → [{"name":"book_flight","arguments":{...}}]
 ```
-
-</td>
-</tr>
-</table>
+</details>
 
 **Get the weights**
 
@@ -177,7 +149,7 @@ Or load directly from a URL in the browser — no install step.
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="where-it-runs">
-  <img src="https://img.shields.io/badge/-Where_it_runs-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-Where_it_runs-CE422B?style=flat-square" height="22" alt="Where it runs"/>
 </h2>
 
 <table>
@@ -207,7 +179,7 @@ Cactus's official engine targets mobile and NPUs with hand-tuned ARM SIMD. `need
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="how-it-works">
-  <img src="https://img.shields.io/badge/-How_it_works-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-How_it_works-CE422B?style=flat-square" height="22" alt="How it works"/>
 </h2>
 
 Needle is a 26M-parameter encoder-decoder transformer with a small twist: it's trained to do exactly one thing — emit a function-call JSON object from a query and a tool list. That focus is why a model this small works at all.
@@ -241,9 +213,9 @@ Architecture deep-dive: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="parity">
-  <img src="https://img.shields.io/badge/-Parity-7EE787?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-Parity-7EE787?style=flat-square" height="22" alt="Parity"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/560%2F560-token--exact-7EE787?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/560%2F560-token--exact-7EE787?style=flat-square" height="22" alt="560/560 token-exact"/>
 </h2>
 
 A common failure mode for from-scratch model reimplementations is silent drift — outputs that look right but diverge at the third decimal place, with rare and untraceable downstream bugs. `needle-rs` rejects that. The Rust engine is required to produce the **exact same token ID sequence** as the Python/JAX reference on every input, at every decode step.
@@ -264,7 +236,7 @@ Plus 55 unit tests on the constrained decoder covering edge cases the parity sui
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="api">
-  <img src="https://img.shields.io/badge/-API-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-API-CE422B?style=flat-square" height="22" alt="API"/>
 </h2>
 
 <details>
@@ -314,7 +286,7 @@ Full header: [`crates/needle-c/include/needle.h`](crates/needle-c/include/needle
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="benchmarks">
-  <img src="https://img.shields.io/badge/-Benchmarks-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-Benchmarks-CE422B?style=flat-square" height="22" alt="Benchmarks"/>
 </h2>
 
 Intel i7-1185G7 (Tiger Lake, 4-core), Linux, release build, median of 5 runs.
@@ -344,7 +316,7 @@ Full methodology and raw numbers: [BENCHMARKS.md](BENCHMARKS.md).
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="use-cases">
-  <img src="https://img.shields.io/badge/-What_it's_good_for-CE422B?style=flat-square" height="22" alt=""/>
+  <img src="https://img.shields.io/badge/-What_it's_good_for-CE422B?style=flat-square" height="22" alt="What it's good for"/>
 </h2>
 
 <table>
@@ -375,8 +347,8 @@ What it's *not* good for: open-ended chat, long-context reasoning, anything wher
 <br/>
 
 <!-- ────────────────────────────────────────────────── -->
-<h2>
-  <img src="https://img.shields.io/badge/-Acknowledgements-7D8590?style=flat-square" height="22" alt=""/>
+<h2 id="acknowledgements">
+  <img src="https://img.shields.io/badge/-Acknowledgements-7D8590?style=flat-square" height="22" alt="Acknowledgements"/>
 </h2>
 
 Needle is designed and trained by [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. The model architecture, training code, dataset, and weights are entirely their work, released under MIT. `needle-rs` is an independent Rust runtime — no upstream code is copied, only the published architecture is implemented.
@@ -386,8 +358,8 @@ Needle is designed and trained by [Henry Ndubuaku](https://github.com/hndubuaku)
 <br/>
 
 <!-- ────────────────────────────────────────────────── -->
-<h2>
-  <img src="https://img.shields.io/badge/-Citation-7D8590?style=flat-square" height="22" alt=""/>
+<h2 id="citation">
+  <img src="https://img.shields.io/badge/-Citation-7D8590?style=flat-square" height="22" alt="Citation"/>
 </h2>
 
 ```bibtex
