@@ -11,5 +11,5 @@ description = "C ABI shared library for Needle (FFI, Python, Go, Swift, etc.)"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-needle-infer = { path = "../needle-infer" }
-needle-core = { path = "../needle-core", features = ["std"] }
+needle-infer = { path = "../needle-infer", version = "0.1.0" }
+needle-core = { path = "../needle-core", version = "0.1.0", features = ["std"] }
