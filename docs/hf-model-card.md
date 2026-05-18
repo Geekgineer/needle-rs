@@ -110,12 +110,25 @@ This format is consumed directly by `needle-rs`. It is not compatible with `tran
 
 The intended runtime is [`needle-rs`](https://github.com/geekgineer/needle-rs). The same weights work across all its deployment targets — native CLI, Rust API, C FFI, and browser/Node.js via WebAssembly.
 
+### Download weights
+
+```python
+from huggingface_hub import hf_hub_download
+
+weights_path = hf_hub_download("Abdalrahman/needle-rs-safetensors", "needle.safetensors")
+vocab_path   = hf_hub_download("Abdalrahman/needle-rs-safetensors", "vocab.txt")
+```
+
+Or via CLI:
+
+```bash
+huggingface-cli download Abdalrahman/needle-rs-safetensors \
+  needle.safetensors vocab.txt --local-dir weights/
+```
+
 ### Command line
 
 ```bash
-# Download weights + vocab
-huggingface-cli download Abdalrahman/needle-rs-safetensors \
-  needle.safetensors vocab.txt --local-dir weights/
 
 # Single inference
 ./needle-rs weights/needle.safetensors weights/vocab.txt \
