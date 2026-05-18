@@ -1,7 +1,11 @@
 <div align="center">
   <img src="assets/banner.svg" alt="needle-rs" width="100%"/>
 
-  <br/><br/>
+  <br/>
+
+  <img src="assets/demo.gif" alt="needle-rs demo" width="100%"/>
+
+  <br/>
 
   <p>
     <a href="https://needle-rs.pages.dev"><b>→ Live demo</b></a>
