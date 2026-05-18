@@ -82,12 +82,10 @@ jobs:
         run: node crates/needle-wasm/tests/node_e2e.js --no-weights || true
         # Full parity tests require weights; see the parity job below.
 
-  # ── Parity tests (requires HF_TOKEN secret) ────────────────────────────
+  # ── Parity tests ────────────────────────────────────────────────────────
   parity:
     name: parity tests (with weights)
     runs-on: ubuntu-latest
-    # Only runs on the main repo — forks won't have the HF_TOKEN secret.
-    if: github.repository == 'geekgineer/needle-rs'
     steps:
       - uses: actions/checkout@v4
 
@@ -100,8 +98,6 @@ jobs:
           python-version: '3.11'
 
       - name: Download weights from HuggingFace
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pip install -q huggingface_hub
           huggingface-cli download Abdalrahman/needle-rs-safetensors \
