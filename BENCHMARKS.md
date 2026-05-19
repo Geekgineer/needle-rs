@@ -5,6 +5,8 @@ code lives in `crates/needle-core/benches/` and `crates/needle-infer/tests/`.
 
 ## Hardware
 
+### x86_64 (AVX2)
+
 | Field | Value |
 |---|---|
 | CPU | Intel Core i7-1185G7 (Tiger Lake, 4 cores / 8 threads, 3.0 GHz base / 4.8 GHz boost) |
@@ -12,9 +14,14 @@ code lives in `crates/needle-core/benches/` and `crates/needle-infer/tests/`.
 | OS | Linux (kernel 5.15) |
 | Rust | 1.89 stable, `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
 
-Apple Silicon (M-series) numbers are not yet measured. The NEON path is implemented
-and verified to compile for aarch64, but `cargo bench` results are pending.
-Contributions welcome — see CONTRIBUTING.md.
+### aarch64 (NEON)
+
+| Field | Value |
+|---|---|
+| CPU | Apple M4 Max (16-core: 12 P + 4 E) |
+| Memory | 64 GB unified |
+| OS | macOS 26.0.1 |
+| Rust | 1.95.0 stable, `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
 
 ---
 
@@ -25,7 +32,8 @@ Measured with the CLI binary (`needle-rs`), median of 5 runs.
 
 | Runtime | Scenario | Latency |
 |---|---|---|
-| **needle-rs (Rust)** | load + infer | **283 ms** |
+| **needle-rs (Rust, AVX2 — i7-1185G7)** | load + infer | **283 ms** |
+| **needle-rs (Rust, NEON — M4 Max)** | load + infer | **~100 ms** |
 | Python / JAX | first infer (includes XLA JIT compile) | 7,229 ms |
 | Python / JAX | warm infer (JIT already compiled) | 4,389 ms |
 | Python / JAX | cold start (import + load + first infer) | ~9,100 ms |
@@ -34,10 +42,12 @@ The Python numbers include: 1,622 ms import (`jax`, `flax`, etc.) + 7,229 ms fir
 
 ---
 
-## INT4 Matrix-Vector Multiply (AVX2, hot kernels)
+## INT4 Matrix-Vector Multiply (hot kernels)
 
 Every attention projection (Q/K/V/O) and FFN linear layer calls `QuantizedWeight::matvec`.
 Measured with `cargo bench -p needle-core -- matvec`.
+
+### AVX2 (Intel i7-1185G7)
 
 | Shape (in × out) | Kernel usage | Median | Throughput |
 |---|---|---|---|
@@ -46,17 +56,26 @@ Measured with `cargo bench -p needle-core -- matvec`.
 | 2048 × 512 | FFN down-projection | **311 µs** | 3.1 Gelem/s |
 | 512 × 2048 | FFN up/gate-projection | **309 µs** | 3.2 Gelem/s |
 
+### NEON (Apple M4 Max)
+
+| Shape (in × out) | Kernel usage | Median | Throughput |
+|---|---|---|---|
+| 512 × 512 | Q/K/V/O projection (d_model=512) | **28.76 µs** | 9.11 Gelem/s |
+| 512 × 256 | KV projection (4 KV heads × 64) | **14.33 µs** | 9.14 Gelem/s |
+| 2048 × 512 | FFN down-projection | **115.66 µs** | 9.07 Gelem/s |
+| 512 × 2048 | FFN up/gate-projection | **113.79 µs** | 9.21 Gelem/s |
+
 "Elements" = (input features × output features) processed per second (dequantize + multiply + accumulate).
 
 ---
 
 ## ZCRMSNorm
 
-| Sequence length | Median |
-|---|---|
-| 16 tokens | 59 ns |
-| 512 tokens | 773 ns |
-| 2048 tokens | 3.05 µs |
+| Sequence length | AVX2 (i7-1185G7) | NEON (M4 Max) |
+|---|---|---|
+| 16 tokens | 59 ns | **28.0 ns** |
+| 512 tokens | 773 ns | **290.8 ns** |
+| 2048 tokens | 3.05 µs | **1.13 µs** |
 
 ---
 
