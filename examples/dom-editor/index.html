@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>needle-playground — local LLM rewrites the DOM</title>
+    <meta name="description" content="A 22 MB tool-calling LLM running entirely in your browser, manipulating the page in real time." />
+  </head>
+  <body>
+    <main id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">◆</span>
+          <h1 id="app-title">needle-playground</h1>
+          <span id="status-pill" class="pill" data-no-edit>model not loaded</span>
+        </div>
+        <a id="repo-link" href="https://github.com/geekgineer/needle-rs" target="_blank" rel="noopener" class="muted">needle-rs ↗</a>
+      </header>
+
+      <section id="load-panel" class="panel">
+        <p id="lede" class="lede">
+          A 26M-parameter tool-calling LLM runs entirely in this tab. Type one English command;
+          the model walks <strong>this whole page</strong>, generates tools for what it finds,
+          and changes one thing. Yes — the title, this paragraph, even the footer.
+        </p>
+        <button id="load-btn" class="primary" data-no-edit>Load model (22 MB, cached after first run)</button>
+        <div id="progress" class="progress hidden" data-no-edit>
+          <div class="progress-row"><span id="progress-label">Downloading…</span><span id="progress-bytes" class="mono">0 / 22 MB</span></div>
+          <div class="progress-bar"><div id="progress-fill"></div></div>
+        </div>
+      </section>
+
+      <section id="play-panel" class="panel hidden" data-no-edit>
+        <div class="prompt-row">
+          <input id="goal-input" type="text" placeholder="One command, e.g. 'make the title red'…" value="Make the title red" />
+          <button id="run-btn" class="primary">Run →</button>
+        </div>
+        <div class="examples" id="examples"></div>
+      </section>
+
+      <section class="log-section">
+        <div class="panel log-panel" data-no-edit>
+          <div class="panel-label">Steps</div>
+          <ol id="log" class="log"></ol>
+        </div>
+        <div class="panel tools-panel" data-no-edit>
+          <div class="panel-label">
+            Generated tools
+            <span id="tools-count" class="mono muted"></span>
+          </div>
+          <p id="tools-empty" class="muted small">Tools are generated from the current DOM on every run. Run a command to see the list.</p>
+          <ul id="tools-list" class="tools-list hidden"></ul>
+          <div class="tools-legend muted small">
+            <span><span class="dot dot-picked"></span> picked</span>
+            <span><span class="dot dot-selected"></span> top-K candidate</span>
+            <span><span class="dot dot-other"></span> generated, not selected</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="disclaimer panel" data-no-edit>
+        <div class="panel-label">Limitations</div>
+        <ul>
+          <li>This is a <strong>26M-parameter</strong> model — expect mistakes, ignored commands, and odd rewrites. It is a tech demo, not a reliable assistant.</li>
+          <li>Edits are limited to text and inline styles of elements visible in this tab. Anything marked <code>data-no-edit</code> is off-limits, and no changes persist after a refresh.</li>
+          <li>The model only sees the current DOM — it has no browsing, memory across runs, or knowledge of the world beyond what's on this page.</li>
+          <li>English prompts only. Runs entirely on your device's CPU/GPU, so latency depends on your hardware.</li>
+        </ul>
+      </aside>
+
+      <footer id="page-footer" class="footer muted">
+        <span>Two-stage pipeline · retrieve → route · <a href="https://huggingface.co/Abdalrahman/needle-rs-safetensors" target="_blank" rel="noopener">weights on HF</a></span>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
