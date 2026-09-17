@@ -10,6 +10,7 @@ pub mod config;
 pub mod cq;
 pub mod ffn;
 pub mod hadamard;
+pub mod kernels;
 pub mod layers;
 pub mod math;
 pub mod model;
