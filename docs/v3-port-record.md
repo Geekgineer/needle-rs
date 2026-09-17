@@ -63,6 +63,21 @@ kv_window 256  kv_bits 8   codebook_len 28
   container's own size. `tools/gen_cact_v3_parity.py` generates the fixture.
 - **Tokenizer** — the container's embedded blob decodes with the existing
   `sp_tokenizer` unchanged, and matches real `sentencepiece` exactly on 14 cases.
+- **Canon pinned** — `tools/cact_params_v3.py` inverts `export._tensors` to
+  rebuild the Flax tree from the container, and `tools/check_v3_canon.py` runs
+  upstream's own `SimpleAttentionNetwork` on it. Both shipped prompts produce
+  correct tool calls, which is the evidence per-tensor parity cannot give.
+- **Canon in Rust** — `needle-infer::v3::V3Layout` walks the same order and
+  validates every slot whose shape the geometry determines. A container
+  claiming one layer fewer is rejected rather than silently misread.
+- **Core geometry** — `needle-core::v3::V3Config`, including the KV design:
+  `attention_span()` distinguishes the 16 sliding layers from the 4 global
+  ones, and `kv_bytes()` sizes a session to the sequence it actually uses.
+  2.2 MB at int8 for 512 tokens against 10.5 MB if the global layers were
+  preallocated at `max_seq_len`.
+- **Forward ladder captured** — `tools/gen_v3_forward_parity.py` records input
+  embeddings, RoPE tables, engram keys/values at all five sites, and logits, so
+  a Rust mismatch localises to a component. One reference forward is 1.2 s.
 
 ## Findings worth keeping
 
@@ -77,6 +92,12 @@ kv_window 256  kv_bits 8   codebook_len 28
   `<think>`, `<extract>`, `<schema>` and modality tokens (`<image>`, `<speech>`,
   `<tts>`, `<imagen>`). They must resolve to single ids or prompt construction
   would emit them as literal text.
+- **`gate_proj` is not v2's per-head gate.** It is `Dense(num_heads *
+  v_head_dim)` — an elementwise sigmoid over the attention output, 768x768 on
+  this model rather than 12x768.
+- **v3 emits `<think>` chain-of-thought** before tool calls, which v2 did not,
+  and generation must stop on `<|im_end|>` rather than EOS alone. Both affect
+  the default token budget and the tool-call extractor.
 - **Upstream now ships a WebAssembly component** — `wasm-component/needle.component.wasm`
   (4.2 MB) with a real `needle.wit` declaring `cactus:needle@3.0.0`. Their
   native C API remains a four-function global singleton with no handles.
@@ -93,12 +114,8 @@ sequence, so they cannot use the fixed 256-slot KV ring that v2 relies on. That
 allocation strategy has to be settled before the plan can be written without
 placeholders, and it is the single highest-impact unknown in the port.
 
-Two other open items, recorded so they are not rediscovered:
+One other open item, recorded so it is not rediscovered:
 
-- **Engram table count is ambiguous.** The container reports
-  `num_engram_tables 6` while upstream's `engram_geometry` returns 3 — probably
-  3 tables × 2 orders, but a wrong mapping produces plausible wrong logits.
-  Assert the relationship against the reference before building on it.
 - **Apache-2.0.** v3 is Apache-2.0 where v1 and v2 were MIT. The runtime stays
   MIT, but `CITATION.cff`, the Hugging Face model card and any blanket "MIT
   throughout" claim need per-generation wording, and Apache-2.0 carries
