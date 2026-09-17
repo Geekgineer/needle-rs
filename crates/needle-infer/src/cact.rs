@@ -25,6 +25,14 @@ use std::path::Path;
 pub const TAG: u32 = 0x05E1_2A83;
 /// Fixed header size: 29 u32 fields plus one f32.
 pub const HEADER_BYTES: usize = 30 * 4;
+
+/// Needle 3 container tag — one greater than [`TAG`], so a container states
+/// its own generation in the first word and dispatch never guesses.
+pub const TAG_V3: u32 = 0x05E1_2A84;
+
+/// Needle 3 header: 48 `u32` then `rope_theta` as `f32`
+/// (`_HDR_FMT = "<48If"` in upstream `export.py`).
+pub const HEADER_BYTES_V3: usize = 49 * 4;
 /// Directory record size.
 pub const REC_BYTES: usize = 44;
 /// Blob alignment.
@@ -289,6 +297,130 @@ impl Record {
 }
 
 /// A parsed `.cact` blob. Owns the bytes; tensors are decoded on demand.
+/// Geometry declared by a Needle 3 container header.
+///
+/// Field order is fixed by upstream `export.py`; the runtime derives
+/// everything from it, so one binary runs any configuration of the
+/// architecture. Read from the container, never assumed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CactV3Geometry {
+    pub num_tensors: usize,
+    pub codebook_len: usize,
+    pub kv_window: usize,
+    pub kv_bits: u32,
+    pub vocab_size: usize,
+    /// Tied text-slice head; 0 means the full vocab. Rows past this are
+    /// input-only code embeddings.
+    pub out_vocab: usize,
+    pub d_model: usize,
+    pub num_heads: usize,
+    pub num_kv_heads: usize,
+    pub num_layers: usize,
+    /// Query/key head width. Unlike v2, this differs from `v_head_dim`.
+    pub qk_head_dim: usize,
+    pub v_head_dim: usize,
+    pub max_seq_len: usize,
+    pub hada_n: usize,
+    pub mhc_lanes: usize,
+    /// Per-layer local attention width. Layers in `global_layers` ignore it.
+    pub sliding_window: usize,
+    /// Bit `i` marks layer `i` as full-attention.
+    global_mask: u64,
+    /// Causal depthwise convolution width over Q, K and V. 0 means none.
+    pub qkv_conv_taps: usize,
+    pub engram_slots: usize,
+    pub engram_sub_dim: usize,
+    pub num_engram_tables: usize,
+    pub engram_conv_taps: usize,
+    pub engram_conv_dilation: usize,
+    pub engram_seed_heads: usize,
+    pub engram_orders: Vec<usize>,
+    pub engram_sites: Vec<usize>,
+    pub rope_theta: f32,
+}
+
+impl CactV3Geometry {
+    /// Parse the 49 header words.
+    pub fn from_words(w: &[u32]) -> Result<Self, CactError> {
+        if w.len() < 49 {
+            return Err(CactError::TooShort {
+                need: HEADER_BYTES_V3,
+                got: w.len() * 4,
+            });
+        }
+        if w[0] != TAG_V3 {
+            return Err(CactError::BadTag(w[0]));
+        }
+        let num_orders = w[26] as usize;
+        let num_sites = w[31] as usize;
+        let take = |base: usize, n: usize, cap: usize| -> Vec<usize> {
+            (0..n.min(cap)).map(|k| w[base + k] as usize).collect()
+        };
+        Ok(Self {
+            num_tensors: w[1] as usize,
+            codebook_len: w[2] as usize,
+            kv_window: w[3] as usize,
+            kv_bits: w[4],
+            vocab_size: w[5] as usize,
+            out_vocab: w[6] as usize,
+            d_model: w[7] as usize,
+            num_heads: w[8] as usize,
+            num_kv_heads: w[9] as usize,
+            num_layers: w[10] as usize,
+            qk_head_dim: w[11] as usize,
+            v_head_dim: w[12] as usize,
+            max_seq_len: w[13] as usize,
+            hada_n: w[14] as usize,
+            mhc_lanes: w[15] as usize,
+            sliding_window: w[16] as usize,
+            global_mask: (w[17] as u64) | ((w[18] as u64) << 32),
+            qkv_conv_taps: w[19] as usize,
+            engram_slots: w[20] as usize,
+            engram_sub_dim: w[21] as usize,
+            num_engram_tables: w[22] as usize,
+            engram_conv_taps: w[23] as usize,
+            engram_conv_dilation: w[24] as usize,
+            engram_seed_heads: w[25] as usize,
+            engram_orders: take(27, num_orders, 4),
+            engram_sites: take(32, num_sites, 16),
+            rope_theta: f32::from_bits(w[48]),
+        })
+    }
+
+    /// Layers that attend over the whole sequence rather than
+    /// `sliding_window`.
+    pub fn global_layers(&self) -> Vec<usize> {
+        (0..self.num_layers)
+            .filter(|i| self.is_global(*i))
+            .collect()
+    }
+
+    /// True when layer `i` attends globally.
+    pub fn is_global(&self, i: usize) -> bool {
+        i < 64 && self.global_mask >> i & 1 == 1
+    }
+
+    /// Queries per key/value head.
+    pub fn kv_repeat(&self) -> usize {
+        self.num_heads / self.num_kv_heads
+    }
+
+    /// Width of the concatenated query projection.
+    pub fn q_dim(&self) -> usize {
+        self.num_heads * self.qk_head_dim
+    }
+
+    /// Width of the concatenated key projection.
+    pub fn k_dim(&self) -> usize {
+        self.num_kv_heads * self.qk_head_dim
+    }
+
+    /// Width of the concatenated value projection.
+    pub fn v_dim(&self) -> usize {
+        self.num_kv_heads * self.v_head_dim
+    }
+}
+
 pub struct Cact {
     raw: Vec<u8>,
     pub geom: CactGeometry,
@@ -1075,5 +1207,98 @@ mod tests {
         ));
         assert!(matches!(c.cq(0), Err(CactError::DtypeMismatch { .. })));
         assert_eq!(c.raw_tensor(tok).unwrap().len(), 16);
+    }
+
+    // ── Needle 3 container ───────────────────────────────────────────────
+
+    /// A minimal v3 header with the geometry the shipped container declares.
+    fn v3_header_words() -> Vec<u32> {
+        let mut h = vec![0u32; 49];
+        h[0] = TAG_V3;
+        h[1] = 581; // num_tensors
+        h[2] = 28; // codebook_len
+        h[3] = 256; // kv_window
+        h[4] = 8; // kv_bits
+        h[5] = 8192; // vocab
+        h[6] = 8192; // out_vocab
+        h[7] = 768; // d_model
+        h[8] = 12; // num_heads
+        h[9] = 2; // num_kv_heads
+        h[10] = 20; // num_layers
+        h[11] = 48; // qk_head_dim
+        h[12] = 64; // v_head_dim
+        h[13] = 8192; // max_seq_len
+        h[14] = 1024; // hada_n
+        h[15] = 4; // mhc_lanes
+        h[16] = 1024; // sliding_window
+        h[17] = (1 << 4) | (1 << 9) | (1 << 14) | (1 << 19);
+        h[19] = 3; // qkv_conv_taps
+        h[20] = 18432; // engram_slots
+        h[21] = 128; // engram_sub_dim
+        h[22] = 6; // num_engram_tables
+        h[23] = 4; // engram_conv_taps
+        h[24] = 3; // engram_conv_dilation
+        h[25] = 0; // engram_seed_heads
+        h[26] = 2; // num_engram_orders
+        h[27] = 2;
+        h[28] = 3;
+        h[31] = 5; // num_engram_sites
+        h[32] = 3;
+        h[33] = 7;
+        h[34] = 11;
+        h[35] = 15;
+        h[36] = 19;
+        h[48] = 100_000.0f32.to_bits();
+        h
+    }
+
+    #[test]
+    fn v3_header_parses_every_field() {
+        let g = CactV3Geometry::from_words(&v3_header_words()).expect("header should parse");
+        assert_eq!(g.d_model, 768);
+        assert_eq!(g.num_heads, 12);
+        assert_eq!(g.num_kv_heads, 2);
+        assert_eq!(g.qk_head_dim, 48);
+        assert_eq!(g.v_head_dim, 64);
+        assert_eq!(g.num_layers, 20);
+        assert_eq!(g.out_vocab, 8192);
+        assert_eq!(g.sliding_window, 1024);
+        assert_eq!(g.qkv_conv_taps, 3);
+        assert_eq!(g.engram_slots, 18432);
+        assert_eq!(g.num_engram_tables, 6);
+        assert_eq!(g.engram_orders, vec![2, 3]);
+        assert_eq!(g.engram_sites, vec![3, 7, 11, 15, 19]);
+        assert_eq!(g.global_layers(), vec![4, 9, 14, 19]);
+        assert_eq!(g.rope_theta, 100_000.0);
+    }
+
+    #[test]
+    fn v3_global_mask_spans_both_words() {
+        let mut h = v3_header_words();
+        h[10] = 40; // 40 layers, so bits land in the high word too
+        h[17] = 1 << 4;
+        h[18] = 1 << 3; // layer 35
+        let g = CactV3Geometry::from_words(&h).expect("header should parse");
+        assert_eq!(g.global_layers(), vec![4, 35]);
+        assert!(g.is_global(4));
+        assert!(g.is_global(35));
+        assert!(!g.is_global(5));
+    }
+
+    #[test]
+    fn v3_rejects_the_v2_tag() {
+        let mut h = v3_header_words();
+        h[0] = TAG;
+        assert!(matches!(
+            CactV3Geometry::from_words(&h),
+            Err(CactError::BadTag(_))
+        ));
+    }
+
+    #[test]
+    fn v2_loader_rejects_a_v3_tag() {
+        let mut b = synth(3, true, true);
+        b[0..4].copy_from_slice(&TAG_V3.to_le_bytes());
+        assert!(matches!(Cact::from_bytes(b), Err(CactError::BadTag(_))));
     }
 }
