@@ -28,6 +28,17 @@ def main():
             "needle3.cact --local-dir weights/"
         )
 
+    # These are private upstream names. Pinned reference: dd85774 "Needle 3
+    # Live". If upstream renames them, fail with a diagnosis rather than a
+    # bare AttributeError three frames down.
+    for attr in ("_REC_FMT", "_HDR_FMT"):
+        if not hasattr(export, attr):
+            sys.exit(
+                f"upstream export.py no longer defines {attr}; the vendored "
+                "reference has moved past dd85774 and this generator needs "
+                "updating alongside the Rust header parser"
+            )
+
     meta, _tensors = export.read_export(str(CONTAINER))
     raw = CONTAINER.read_bytes()
 

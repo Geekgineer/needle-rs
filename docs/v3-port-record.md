@@ -27,7 +27,8 @@ The v2 port's record, whose method this follows: [v2-port-record.md](v2-port-rec
 Unchanged, and therefore reused rather than rewritten: Cactus-Quants (same
 `embedding=4,mhc=4,default=2` scheme at group 128), the FWHT, mHC with Sinkhorn
 lane mixing, HadamardMLP, ZCRMSNorm on q/k, RoPE, the 44-byte directory record,
-the codebook layout, 64-byte blob alignment, and the SentencePiece blob format.
+the codebook layout, 64-byte blob alignment, and the SentencePiece blob
+*format* — though not the model itself, which differs; see Findings.
 
 ## Shipped geometry
 
@@ -131,7 +132,10 @@ downloaded container.
 
 ## Reference files (upstream, treat as spec)
 
-Vendored at `needle/`, currently at `dd85774 Needle 3 Live`.
+Vendored at `needle/`, pinned to the local branch `needle3-oracle` at
+`dd85774 Needle 3 Live`. The tracked fixtures were generated against that
+commit, so moving the clone changes the oracle underneath them — check out
+`needle3-oracle` rather than pulling, and regenerate if you advance it.
 
 - `needle/model/export.py` — `.cact` byte layout, `_tensors` canon order, `read_export`
 - `needle/model/architecture.py` — the model; `head_dims`, `engram_geometry`, `Stack`
