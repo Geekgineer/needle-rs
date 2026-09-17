@@ -67,7 +67,7 @@ pub unsafe extern "C" fn needle_v3_load(cact_path: *const c_char) -> *mut Needle
     match V3Engine::load(path) {
         Ok(engine) => Box::into_raw(Box::new(NeedleV3Handle { engine })),
         Err(e) => {
-            set_last_error(&format!("failed to load {path}: {e}"));
+            set_last_error(format!("failed to load {path}: {e}"));
             ptr::null_mut()
         }
     }
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn needle_v3_load_bytes(data: *const u8, len: usize) -> *m
     match V3Engine::from_bytes(bytes) {
         Ok(engine) => Box::into_raw(Box::new(NeedleV3Handle { engine })),
         Err(e) => {
-            set_last_error(&format!("failed to load container: {e}"));
+            set_last_error(format!("failed to load container: {e}"));
             ptr::null_mut()
         }
     }
