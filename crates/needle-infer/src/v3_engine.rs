@@ -8,6 +8,7 @@
 use needle_core::v3::{V3Cache, V3Model};
 
 use crate::cact::CactV3;
+use crate::constrained::{byte_table, ConstrainedDecoder, ToolDef};
 use crate::prompt::{build_prompt, IM_END, THINK_END, THINK_START, TOOL_CALL_END, TOOL_CALL_START};
 use crate::sp_tokenizer::SpTokenizer;
 use crate::v3::{confidence_head, model_from_cact, V3LoadError};
@@ -41,6 +42,13 @@ pub struct V3Options {
     pub temperature: f32,
     pub seed: u64,
     pub system: Option<String>,
+    /// Restrict the tool-call payload to the declared schema.
+    ///
+    /// Engaged only between the `<tool_call>` markers. Running a JSON grammar
+    /// across the whole turn would be actively wrong for v3, which reasons in
+    /// prose first: a `"name":` inside `<think>` would drive the state machine
+    /// into a constrained state where it does not belong.
+    pub constrain: bool,
 }
 
 impl Default for V3Options {
@@ -50,6 +58,7 @@ impl Default for V3Options {
             temperature: 0.0,
             seed: 0,
             system: None,
+            constrain: false,
         }
     }
 }
@@ -150,7 +159,29 @@ impl V3Engine {
         let mut rng = SplitMix64::new(opts.seed);
         let mut stop = StopReason::MaxTokens;
 
+        // Both markers are single user-defined tokens, so entering and leaving
+        // the payload is an id comparison rather than a text scan.
+        let tc_start = self.tokenizer.id_of(TOOL_CALL_START);
+        let tc_end = self.tokenizer.id_of(TOOL_CALL_END);
+        let mut grammar = if opts.constrain {
+            let defs = ToolDef::from_json(tools_json);
+            (!defs.is_empty()).then(|| {
+                ConstrainedDecoder::new(&defs, byte_table(&self.tokenizer)).with_unique_arg_keys()
+            })
+        } else {
+            None
+        };
+        let mut in_tool_call = false;
+
         for _ in 0..budget {
+            if in_tool_call {
+                if let Some(g) = grammar.as_ref() {
+                    let mask = g.logit_mask(self.model.cfg.logit_rows());
+                    for (l, &m) in logits.iter_mut().zip(mask.iter()) {
+                        *l += m;
+                    }
+                }
+            }
             let next = if opts.temperature <= 0.0 {
                 argmax(&logits)
             } else {
@@ -176,6 +207,18 @@ impl V3Engine {
                 emitted = full;
             }
             ids.push(next);
+
+            if grammar.is_some() {
+                if Some(next) == tc_start {
+                    in_tool_call = true;
+                } else if Some(next) == tc_end {
+                    in_tool_call = false;
+                } else if in_tool_call {
+                    if let Some(g) = grammar.as_mut() {
+                        g.update(next);
+                    }
+                }
+            }
 
             if cache.pos() >= self.model.cfg.max_seq_len {
                 stop = StopReason::MaxSeqLen;

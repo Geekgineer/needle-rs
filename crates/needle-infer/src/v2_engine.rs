@@ -11,7 +11,7 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-use crate::constrained::{ConstrainedDecoder, ToolDef};
+use crate::constrained::{byte_table, ConstrainedDecoder, ToolDef};
 use crate::sp_tokenizer::SpTokenizer;
 use crate::v2::{V2Bundle, V2LoadError};
 use needle_core::v2::{
@@ -625,15 +625,6 @@ impl V2Engine {
         scored.truncate(top_k);
         scored
     }
-}
-
-/// Per-token byte table in the `(id, bytes)` form `ConstrainedDecoder` expects.
-fn byte_table(tok: &SpTokenizer) -> Vec<(u32, Vec<u8>)> {
-    tok.token_bytes()
-        .into_iter()
-        .enumerate()
-        .map(|(i, b)| (i as u32, b))
-        .collect()
 }
 
 /// The text a new token added, given the ids so far.

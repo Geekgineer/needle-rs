@@ -29,7 +29,7 @@ Options:
   --seed <N>          Sampling seed (v2 only, default 0)
   --system <TEXT>     System message (v2 only)
   --json              Print only the tool-call payload, not the full text (v2 only)
-  --constrain         Restrict the tool-call payload to the declared schema (v2 only)
+  --constrain         Restrict the tool-call payload to the declared schema (v3, v2)
   --prefill-chunk <N> Positions per batched-prefill chunk; 0 prefills one at a
                       time (v2 only, default 64)
   --help              Print this message
@@ -170,9 +170,6 @@ fn run_v3(o: &Opts, model: &str) {
     }
     let (query, tools) = (&o.positional[1], &o.positional[2]);
 
-    if o.constrain {
-        eprintln!("note: --constrain is not yet wired for Needle 3; ignoring");
-    }
     if o.prefill_chunk.is_some() {
         eprintln!("note: --prefill-chunk applies to Needle 2 only; ignoring");
     }
@@ -187,6 +184,7 @@ fn run_v3(o: &Opts, model: &str) {
         temperature: o.temperature.unwrap_or(0.0),
         seed: o.seed.unwrap_or(0) as u64,
         system: o.system.clone(),
+        constrain: o.constrain,
     };
 
     let result = if o.stream {

@@ -167,3 +167,76 @@ fn run_scored_pairs_an_answer_with_its_confidence() {
     assert!((0.0..=1.0).contains(&p), "probability out of range: {p}");
     assert!(res.text.contains("get_weather"));
 }
+
+#[test]
+fn constrained_decoding_keeps_the_schema() {
+    let Some(e) = engine() else { return };
+    let opts = V3Options {
+        constrain: true,
+        ..V3Options::default()
+    };
+
+    for query in [
+        "What's the weather in Paris?",
+        "Turn off the bedroom lights",
+        "Turn on the kitchen lights",
+    ] {
+        let res = e.generate(query, TOOLS, &opts);
+        let call = needle_infer::v3_engine::extract_tool_call(&res.text);
+        println!("constrained {query:?} -> {call:?}");
+
+        let Some(call) = call else { continue };
+        if call == "[]" {
+            continue; // an abstention is schema-valid
+        }
+        // Valid JSON, and every key it names must be declared. v1 could emit a
+        // repeated argument key and Unicode garbage once its declared keys ran
+        // out; the grammar exists to make that unrepresentable.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&call).unwrap_or_else(|e| panic!("{call} is not JSON: {e}"));
+        let arr = parsed.as_array().expect("a tool call is an array");
+        for item in arr {
+            let name = item["name"].as_str().expect("each call names a tool");
+            assert!(
+                name == "get_weather" || name == "control_lights",
+                "invented a tool: {name}"
+            );
+            let args = item["arguments"]
+                .as_object()
+                .expect("arguments is an object");
+            let allowed: &[&str] = match name {
+                "get_weather" => &["city"],
+                _ => &["room", "state"],
+            };
+            for k in args.keys() {
+                assert!(
+                    allowed.contains(&k.as_str()),
+                    "{name} got undeclared key {k}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn constraining_does_not_disturb_a_clean_answer() {
+    let Some(e) = engine() else { return };
+    let q = "What's the weather in Paris?";
+    let free = e.generate(q, TOOLS, &V3Options::default());
+    let bound = e.generate(
+        q,
+        TOOLS,
+        &V3Options {
+            constrain: true,
+            ..V3Options::default()
+        },
+    );
+    // When the model was already going to produce valid JSON, the grammar
+    // should be inert. If this ever diverges, the mask is rejecting tokens the
+    // schema actually permits.
+    assert_eq!(
+        free.tokens, bound.tokens,
+        "constraining changed an already-valid answer:\n  free  {:?}\n  bound {:?}",
+        free.text, bound.text
+    );
+}
