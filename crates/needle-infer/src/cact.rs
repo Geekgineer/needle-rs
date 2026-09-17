@@ -421,6 +421,74 @@ impl CactV3Geometry {
     }
 }
 
+/// Parse `num_tensors` directory records starting at `dir_start`.
+///
+/// The record layout is identical across container generations — only the
+/// header ahead of it changed — so both loaders use this.
+fn parse_directory(
+    raw: &[u8],
+    dir_start: usize,
+    num_tensors: usize,
+) -> Result<Vec<Record>, CactError> {
+    let mut records = Vec::with_capacity(num_tensors);
+    for i in 0..num_tensors {
+        let b = &raw[dir_start + i * REC_BYTES..dir_start + (i + 1) * REC_BYTES];
+        let g32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        let g64 = |o: usize| {
+            u64::from_le_bytes([
+                b[o],
+                b[o + 1],
+                b[o + 2],
+                b[o + 3],
+                b[o + 4],
+                b[o + 5],
+                b[o + 6],
+                b[o + 7],
+            ])
+        };
+        let ndim = b[1];
+        if ndim > 4 {
+            return Err(CactError::BadNdim { index: i, ndim });
+        }
+        // Layout: u8 dtype, u8 ndim, u16 pad, u32 shape[4], u64 offset,
+        //         u64 nbytes, u32 group, u32 bits.
+        let rec = Record {
+            dtype: b[0],
+            ndim,
+            shape: [
+                g32(4) as usize,
+                g32(8) as usize,
+                g32(12) as usize,
+                g32(16) as usize,
+            ],
+            offset: g64(20),
+            nbytes: g64(28),
+            group: g32(36) as usize,
+            bits: g32(40) as u8,
+        };
+        let end = rec.offset.saturating_add(rec.nbytes);
+        if end > raw.len() as u64 {
+            return Err(CactError::BlobOutOfRange {
+                index: i,
+                offset: rec.offset,
+                nbytes: rec.nbytes,
+                file: raw.len(),
+            });
+        }
+        records.push(rec);
+    }
+    Ok(records)
+}
+
+/// Decode the shared Lloyd-Max codebooks (`cb2|cb3|cb4`) that sit between
+/// the header and the directory.
+fn parse_codebook(raw: &[u8], header_bytes: usize, codebook_len: usize) -> Vec<f32> {
+    raw[header_bytes..header_bytes + codebook_len * 4]
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
 pub struct Cact {
     raw: Vec<u8>,
     pub geom: CactGeometry,
@@ -493,58 +561,9 @@ impl Cact {
             });
         }
 
-        let codebook: Vec<f32> = raw[HEADER_BYTES..dir_start]
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
+        let codebook = parse_codebook(&raw, HEADER_BYTES, codebook_len);
 
-        let mut records = Vec::with_capacity(num_tensors);
-        for i in 0..num_tensors {
-            let b = &raw[dir_start + i * REC_BYTES..dir_start + (i + 1) * REC_BYTES];
-            let g32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-            let g64 = |o: usize| {
-                u64::from_le_bytes([
-                    b[o],
-                    b[o + 1],
-                    b[o + 2],
-                    b[o + 3],
-                    b[o + 4],
-                    b[o + 5],
-                    b[o + 6],
-                    b[o + 7],
-                ])
-            };
-            let ndim = b[1];
-            if ndim > 4 {
-                return Err(CactError::BadNdim { index: i, ndim });
-            }
-            // Layout: u8 dtype, u8 ndim, u16 pad, u32 shape[4], u64 offset,
-            //         u64 nbytes, u32 group, u32 bits.
-            let rec = Record {
-                dtype: b[0],
-                ndim,
-                shape: [
-                    g32(4) as usize,
-                    g32(8) as usize,
-                    g32(12) as usize,
-                    g32(16) as usize,
-                ],
-                offset: g64(20),
-                nbytes: g64(28),
-                group: g32(36) as usize,
-                bits: g32(40) as u8,
-            };
-            let end = rec.offset.saturating_add(rec.nbytes);
-            if end > raw.len() as u64 {
-                return Err(CactError::BlobOutOfRange {
-                    index: i,
-                    offset: rec.offset,
-                    nbytes: rec.nbytes,
-                    file: raw.len(),
-                });
-            }
-            records.push(rec);
-        }
+        let records = parse_directory(&raw, dir_start, num_tensors)?;
 
         Ok(Self {
             raw,
@@ -946,6 +965,128 @@ impl CactLayout {
 
     pub fn head(&self, code: u8) -> Option<&HeadIdx> {
         self.heads.iter().find(|h| h.code == code)
+    }
+}
+
+/// A loaded Needle 3 container.
+///
+/// Same body as v2 — codebook, nameless positional directory, 64-byte
+/// aligned blobs — over a 196-byte header instead of 120. The generation
+/// is decided by the tag, so a v2 container cannot be opened here and a v3
+/// container cannot be opened as v2.
+pub struct CactV3 {
+    raw: Vec<u8>,
+    pub geom: CactV3Geometry,
+    /// Concatenated `cb2|cb3|cb4`, exactly as stored.
+    pub codebook: Vec<f32>,
+    records: Vec<Record>,
+}
+
+impl CactV3 {
+    pub fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let raw = std::fs::read(path)?;
+        Self::from_bytes(raw).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    pub fn from_bytes(raw: Vec<u8>) -> Result<Self, CactError> {
+        if raw.len() < HEADER_BYTES_V3 {
+            return Err(CactError::TooShort {
+                need: HEADER_BYTES_V3,
+                got: raw.len(),
+            });
+        }
+        let words: Vec<u32> = (0..49)
+            .map(|i| {
+                u32::from_le_bytes([raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3]])
+            })
+            .collect();
+        let geom = CactV3Geometry::from_words(&words)?;
+
+        if geom.codebook_len != cq::CODEBOOK_LEN {
+            return Err(CactError::BadCodebookLen(geom.codebook_len));
+        }
+        let dir_start = HEADER_BYTES_V3 + geom.codebook_len * 4;
+        let dir_end = dir_start + geom.num_tensors * REC_BYTES;
+        if raw.len() < dir_end {
+            return Err(CactError::TooShort {
+                need: dir_end,
+                got: raw.len(),
+            });
+        }
+
+        let codebook = parse_codebook(&raw, HEADER_BYTES_V3, geom.codebook_len);
+        let records = parse_directory(&raw, dir_start, geom.num_tensors)?;
+
+        Ok(Self {
+            raw,
+            geom,
+            codebook,
+            records,
+        })
+    }
+
+    pub fn num_tensors(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn records(&self) -> &[Record] {
+        &self.records
+    }
+
+    pub fn record(&self, i: usize) -> &Record {
+        &self.records[i]
+    }
+
+    /// Total file size, for size accounting.
+    pub fn byte_len(&self) -> usize {
+        self.raw.len()
+    }
+
+    fn blob(&self, i: usize) -> &[u8] {
+        let r = &self.records[i];
+        &self.raw[r.offset as usize..(r.offset + r.nbytes) as usize]
+    }
+
+    /// The single `RAW` record, which carries the embedded tokenizer.
+    pub fn raw_tensor(&self, i: usize) -> Result<&[u8], CactError> {
+        let r = &self.records[i];
+        if r.dtype != DT_RAW {
+            return Err(CactError::DtypeMismatch {
+                index: i,
+                want: DT_RAW,
+                got: r.dtype,
+            });
+        }
+        Ok(self.blob(i))
+    }
+
+    /// Index of the embedded tokenizer blob, if the container has one.
+    pub fn tokenizer_index(&self) -> Option<usize> {
+        self.records.iter().position(|r| r.dtype == DT_RAW)
+    }
+
+    /// The embedded tokenizer blob.
+    pub fn tokenizer_blob(&self) -> Option<&[u8]> {
+        self.tokenizer_index().map(|i| self.blob(i))
+    }
+
+    pub fn cq(&self, i: usize) -> Result<CqWeight, CactError> {
+        let r = &self.records[i];
+        if r.dtype != DT_CQ {
+            return Err(CactError::DtypeMismatch {
+                index: i,
+                want: DT_CQ,
+                got: r.dtype,
+            });
+        }
+        Ok(CqWeight::from_blob(
+            self.blob(i),
+            r.shape[0],
+            r.shape[1],
+            r.group,
+            r.bits,
+            &self.codebook,
+        )?)
     }
 }
 
