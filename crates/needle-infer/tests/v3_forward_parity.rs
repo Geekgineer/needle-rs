@@ -9,6 +9,7 @@
 //! wired together in the right order, with the right weights in the right
 //! slots, over a real prompt — which no amount of component parity can.
 
+use needle_core::v3::V3Cache;
 use needle_infer::cact::CactV3;
 use needle_infer::v3::model_from_cact;
 
@@ -126,5 +127,73 @@ fn logits_match_the_reference() {
     assert!(
         rel < 5e-3,
         "logits deviate by {rel:.3e} of RMS (abs {worst:.3e})"
+    );
+}
+
+#[test]
+fn incremental_decode_reproduces_the_prefill() {
+    let Some(f) = Fixture::load() else { return };
+    let tokens: Vec<u32> = f.meta["tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as u32)
+        .collect();
+    let rows = f.meta["geometry"]["out_vocab"].as_u64().unwrap() as usize;
+
+    let cact = CactV3::load(CACT).expect("load container");
+    let model = model_from_cact(&cact).expect("build model");
+
+    // The prefill path is the one verified against the reference, so it is
+    // the target here: the cache must reproduce it, not merely look sane.
+    let want = model.forward_sequence(&tokens);
+
+    let mut cache = V3Cache::new(&model.cfg, tokens.len());
+    let t0 = std::time::Instant::now();
+    let mut worst = 0.0f32;
+    let mut sq = 0.0f64;
+    let mut mismatches = Vec::new();
+
+    for (t, &tok) in tokens.iter().enumerate() {
+        let got = model.decode_step(&mut cache, tok);
+        assert_eq!(got.len(), rows);
+        let expect = &want[t * rows..(t + 1) * rows];
+
+        for (&a, &b) in got.iter().zip(expect) {
+            sq += (b as f64) * (b as f64);
+            worst = worst.max((a - b).abs());
+        }
+        let am = |r: &[f32]| {
+            r.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(i, _)| i)
+                .unwrap()
+        };
+        if am(&got) != am(expect) {
+            mismatches.push(t);
+        }
+    }
+    let elapsed = t0.elapsed();
+    let rms = (sq / want.len() as f64).sqrt() as f32;
+    let rel = worst / rms;
+
+    println!(
+        "v3 decode: {} steps, max abs deviation {worst:.3e} against RMS {rms:.3} \
+         = {rel:.3e} relative, {} argmax mismatches, {:?} ({:.1} ms/token), \
+         cache {} KB",
+        tokens.len(),
+        mismatches.len(),
+        elapsed,
+        elapsed.as_secs_f64() * 1000.0 / tokens.len() as f64,
+        cache.bytes() / 1024,
+    );
+    assert!(
+        mismatches.is_empty(),
+        "incremental decode diverged from prefill at positions {mismatches:?}"
+    );
+    assert!(
+        rel < 1e-4,
+        "decode deviates from prefill by {rel:.3e} of RMS (abs {worst:.3e})"
     );
 }

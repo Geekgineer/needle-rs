@@ -15,7 +15,10 @@ use crate::kernels::rms_unit_to;
 use crate::math::{cos, sin, sqrt};
 use crate::norm::zc_rms_norm_vec;
 use crate::ops::sigmoid;
-use crate::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
+use crate::v3::attention::{
+    attend, attend_step, causal_depthwise_conv, norm_and_rope, AttnDims, Ring,
+};
+use crate::v3::cache::{Qkv, V3Cache};
 use crate::v3::config::V3Config;
 use crate::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
 use crate::v3::kernels::{hadamard_mlp, HadaMlp, HadaPerms};
@@ -114,6 +117,259 @@ impl V3Model {
             perms,
             embed_scale,
         })
+    }
+
+    /// One incremental decode step: feed `token`, get logits for its position.
+    ///
+    /// Mathematically identical to [`Self::forward_sequence`] at the same
+    /// position — the self-consistency test asserts exactly that.
+    ///
+    /// The mHC lane stream is deliberately **not** cached. Each position's
+    /// lanes start from its own embedding and evolve using only that
+    /// position's values; the sole cross-position dependencies are attention,
+    /// the Q/K/V convolution and the Engram, and the cache carries each of
+    /// those separately.
+    pub fn decode_step(&self, cache: &mut V3Cache, token: u32) -> Vec<f32> {
+        let cfg = &self.cfg;
+        let (d, n) = (cfg.d_model, cfg.mhc_lanes);
+        let pos = cache.pos();
+        let rows = cfg.logit_rows();
+
+        cache.push_token(token);
+
+        // ── Engram for this position ─────────────────────────────────────
+        // The hash reads the last `max(order)` tokens; the cache keeps
+        // exactly that many, oldest first, so the local index of "now" is the
+        // end of that history.
+        let e = &cfg.engram;
+        let hist = cache.token_history().to_vec();
+        let here = hist.len() - 1;
+        let idx = engram_indices(&hist, &e.orders, e.heads, e.slots as u32, e.seed_heads);
+        let num_tables = e.num_tables();
+
+        let mut ek = vec![0.0f32; e.sites.len() * d];
+        let mut ev = vec![0.0f32; e.sites.len() * d];
+        let mut fetched = vec![0.0f32; num_tables * e.sub_dim];
+        let mut row = vec![0.0f32; e.sub_dim];
+        for (s, site) in self.engrams.iter().enumerate() {
+            for t in 0..num_tables {
+                let dst = &mut fetched[t * e.sub_dim..(t + 1) * e.sub_dim];
+                // Validity is judged against the absolute position, not the
+                // retained history length.
+                if ngram_valid(pos, t, &e.orders, e.heads) {
+                    let slot = idx[here * num_tables + t] as usize;
+                    site.tables.dequantize_row(t * e.slots + slot, &mut row);
+                    dst.copy_from_slice(&row);
+                } else {
+                    dst.fill(0.0);
+                }
+            }
+            site.key_proj.matvec(&fetched, &mut ek[s * d..(s + 1) * d]);
+            site.value_proj
+                .matvec(&fetched, &mut ev[s * d..(s + 1) * d]);
+            let mut cur = ev[s * d..(s + 1) * d].to_vec();
+            cache.engram_conv_step(s, &site.taps, &mut cur);
+            ev[s * d..(s + 1) * d].copy_from_slice(&cur);
+        }
+
+        // ── Lane stream for this position ────────────────────────────────
+        let mut lanes = vec![0.0f32; n * d];
+        let mut emb = vec![0.0f32; d];
+        self.embedding.dequantize_row(token as usize, &mut emb);
+        for x in emb.iter_mut() {
+            *x *= self.embed_scale;
+        }
+        for lane in 0..n {
+            lanes[lane * d..(lane + 1) * d].copy_from_slice(&emb);
+        }
+
+        let dims = AttnDims {
+            seq: 1,
+            num_heads: cfg.num_heads,
+            num_kv_heads: cfg.num_kv_heads,
+            qk_head_dim: cfg.qk_head_dim,
+            v_head_dim: cfg.v_head_dim,
+        };
+        let half = cfg.qk_head_dim / 2;
+        let (rc, rs) = self.rope_at(pos);
+
+        let mut nx = vec![0.0f32; n * d];
+        let mut nx_prep = vec![0.0f32; self.mhc.phi_pre.prepared_len()];
+        let mut hpre = vec![0.0f32; n];
+        let mut hpost = vec![0.0f32; n];
+        let mut hres = vec![0.0f32; n * n];
+        let mut scratch = vec![0.0f32; n * d];
+        let mut u = vec![0.0f32; d];
+        let mut q = vec![0.0f32; cfg.q_dim()];
+        let mut k = vec![0.0f32; cfg.k_dim()];
+        let mut v = vec![0.0f32; cfg.v_dim()];
+        let mut attn = vec![0.0f32; cfg.attn_out_dim()];
+        let mut gate = vec![0.0f32; cfg.attn_out_dim()];
+        let mut proj = vec![0.0f32; d];
+        let mut mlp_out = vec![0.0f32; d];
+
+        for li in 0..cfg.num_layers {
+            let layer = &self.layers[li];
+            let m = MhcLayer {
+                a_pre: self.mhc.a_pre[li],
+                a_post: self.mhc.a_post[li],
+                a_res: self.mhc.a_res[li],
+                b_pre: &self.mhc.b_pre[li * n..(li + 1) * n],
+                b_post: &self.mhc.b_post[li * n..(li + 1) * n],
+                b_res: &self.mhc.b_res[li * n * n..(li + 1) * n * n],
+            };
+
+            rms_unit_to(&lanes, &mut nx);
+            self.mhc.phi_pre.prepare_input(&nx, &mut nx_prep);
+            self.mhc
+                .phi_pre
+                .matvec_rows_prepared(&nx_prep, li * n, &mut hpre);
+            mix_down(&lanes, &mut hpre, &m, li, n, d, &mut u);
+
+            let mut bx = u.clone();
+            if let Some(site) = cfg.engram.site_of(li) {
+                crate::v3::engram::apply_site(
+                    &mut bx,
+                    &ek[site * d..(site + 1) * d],
+                    &ev[site * d..(site + 1) * d],
+                    d,
+                );
+            }
+
+            let mut h = bx.clone();
+            zc_rms_norm_vec(&mut h, &layer.norm_in);
+            layer.q_proj.matvec(&h, &mut q);
+            layer.k_proj.matvec(&h, &mut k);
+            layer.v_proj.matvec(&h, &mut v);
+
+            if cfg.qkv_conv_taps > 0 {
+                cache.conv_step(li, Qkv::Q, &layer.q_taps, &mut q);
+                cache.conv_step(li, Qkv::K, &layer.k_taps, &mut k);
+                cache.conv_step(li, Qkv::V, &layer.v_taps, &mut v);
+            }
+            norm_and_rope(
+                &mut q,
+                &layer.q_norm,
+                &rc,
+                &rs,
+                1,
+                cfg.num_heads,
+                cfg.qk_head_dim,
+            );
+            norm_and_rope(
+                &mut k,
+                &layer.k_norm,
+                &rc,
+                &rs,
+                1,
+                cfg.num_kv_heads,
+                cfg.qk_head_dim,
+            );
+            let _ = half;
+
+            cache.write_kv(li, pos, &k, &v);
+            let (lo, hi) = cache.span(li, pos);
+            let slots = cache.slots(li);
+            {
+                let (kb, vb) = cache.kv(li);
+                attend_step(
+                    &q,
+                    Ring {
+                        k: kb,
+                        v: vb,
+                        slots,
+                        lo,
+                        hi,
+                    },
+                    dims,
+                    &mut attn,
+                );
+            }
+
+            layer.gate_proj.matvec(&h, &mut gate);
+            for (ai, &gi) in attn.iter_mut().zip(gate.iter()) {
+                *ai *= sigmoid(gi);
+            }
+            layer.out_proj.matvec(&attn, &mut proj);
+            zc_rms_norm_vec(&mut proj, &layer.post_norm);
+            let agate = sigmoid(layer.attn_gate);
+            for (si, &pi) in bx.iter_mut().zip(proj.iter()) {
+                *si += agate * pi;
+            }
+
+            proj.copy_from_slice(&bx);
+            zc_rms_norm_vec(&mut proj, &layer.pre_hada);
+            hadamard_mlp(&proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
+            for (si, &mi) in bx.iter_mut().zip(mlp_out.iter()) {
+                *si += mi;
+            }
+
+            let mut y = vec![0.0f32; d];
+            for c in 0..d {
+                y[c] = bx[c] - u[c];
+            }
+
+            rms_unit_to(&lanes, &mut nx);
+            self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
+            self.mhc
+                .phi_post
+                .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
+            self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
+            self.mhc
+                .phi_res
+                .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+            scatter_up(
+                &mut lanes,
+                Gates {
+                    post: &mut hpost,
+                    res: &mut hres,
+                },
+                &y,
+                &m,
+                LaneSite {
+                    layer: li,
+                    lanes: n,
+                    d_model: d,
+                },
+                &mut scratch,
+            );
+        }
+
+        cache.advance();
+
+        let mut x = vec![0.0f32; d];
+        for (c, xc) in x.iter_mut().enumerate() {
+            let mut acc = 0.0f32;
+            for lane in 0..n {
+                acc += lanes[lane * d + c];
+            }
+            *xc = acc / n as f32;
+        }
+        zc_rms_norm_vec(&mut x, &self.final_norm);
+        let mut lm_prep = vec![0.0f32; self.embedding.prepared_len()];
+        let mut full = vec![0.0f32; cfg.vocab_size];
+        self.embedding.prepare_input(&x, &mut lm_prep);
+        self.embedding.matvec_prepared(&lm_prep, &mut full);
+        full.truncate(rows);
+        full
+    }
+
+    /// RoPE cos/sin for a single absolute position.
+    fn rope_at(&self, pos: usize) -> (Vec<f32>, Vec<f32>) {
+        let half = self.cfg.qk_head_dim / 2;
+        let mut c = vec![0.0f32; half];
+        let mut s = vec![0.0f32; half];
+        for i in 0..half {
+            let freq = 1.0
+                / powf_f32(
+                    self.cfg.rope_theta,
+                    (2 * i) as f32 / self.cfg.qk_head_dim as f32,
+                );
+            let angle = pos as f32 * freq;
+            c[i] = cos(angle);
+            s[i] = sin(angle);
+        }
+        (c, s)
     }
 
     /// RoPE tables for `seq` positions: `(seq, qk_head_dim / 2)` each.

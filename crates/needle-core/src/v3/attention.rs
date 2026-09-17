@@ -22,6 +22,19 @@ use alloc::vec;
 
 use crate::math::{exp, sqrt};
 
+/// A ring-buffered key/value cache and the window into it a query may read.
+///
+/// `k` and `v` are `(slots, num_kv_heads, ·)` and logical position `p` lives
+/// at slot `p % slots`. `lo..=hi` is inclusive.
+#[derive(Debug, Clone, Copy)]
+pub struct Ring<'a> {
+    pub k: &'a [f32],
+    pub v: &'a [f32],
+    pub slots: usize,
+    pub lo: usize,
+    pub hi: usize,
+}
+
 /// Shapes one attention call works over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttnDims {
@@ -180,6 +193,73 @@ pub fn attend(
     }
 }
 
+/// One decode step against a ring-buffered cache.
+///
+/// `q` is this position's queries, `(num_heads, qk_head_dim)`. `k` and `v` are
+/// the cache, `(slots, num_kv_heads, ·)`, where logical position `p` lives at
+/// slot `p % slots`. `lo..=hi` is the inclusive range of logical positions this
+/// query may attend to — the caller derives it from the layer's span, which is
+/// the whole of the local/global distinction.
+///
+/// A local layer passes `slots = sliding_window` and a bounded `lo`; a global
+/// layer passes `slots >= hi + 1` and `lo = 0`. Nothing here needs to know
+/// which kind it is serving.
+pub fn attend_step(q: &[f32], kv: Ring<'_>, d: AttnDims, out: &mut [f32]) {
+    let Ring {
+        k,
+        v,
+        slots,
+        lo,
+        hi,
+    } = kv;
+    debug_assert_eq!(q.len(), d.num_heads * d.qk_head_dim);
+    debug_assert_eq!(out.len(), d.num_heads * d.v_head_dim);
+    debug_assert!(lo <= hi, "empty attention range {lo}..={hi}");
+    debug_assert!(hi - lo < slots, "range {lo}..={hi} exceeds {slots} slots");
+
+    let scale = 1.0f32 / sqrt(d.qk_head_dim as f32);
+    let repeat = d.kv_repeat();
+    let span = hi - lo + 1;
+    let mut scores = vec![0.0f32; span];
+
+    for h in 0..d.num_heads {
+        let kvh = h / repeat;
+        let qv = &q[h * d.qk_head_dim..(h + 1) * d.qk_head_dim];
+
+        let mut max = f32::NEG_INFINITY;
+        for (i, s) in scores.iter_mut().enumerate() {
+            let slot = (lo + i) % slots;
+            let ko = (slot * d.num_kv_heads + kvh) * d.qk_head_dim;
+            let mut acc = 0.0f32;
+            for (a, b) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
+                acc += a * b;
+            }
+            *s = acc * scale;
+            if *s > max {
+                max = *s;
+            }
+        }
+
+        let mut sum = 0.0f32;
+        for s in scores.iter_mut() {
+            *s = exp(*s - max);
+            sum += *s;
+        }
+        let inv = 1.0 / sum;
+
+        let o = &mut out[h * d.v_head_dim..(h + 1) * d.v_head_dim];
+        o.fill(0.0);
+        for (i, &s) in scores.iter().enumerate() {
+            let w = s * inv;
+            let slot = (lo + i) % slots;
+            let vo = (slot * d.num_kv_heads + kvh) * d.v_head_dim;
+            for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
+                *oi += w * vi;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +278,41 @@ mod tests {
         let mut buf = [1.0f32, 2.0];
         causal_depthwise_conv(&mut buf, &[], 2, 1, 0);
         assert_eq!(buf, [1.0, 2.0]);
+    }
+
+    #[test]
+    fn attend_step_wraps_the_ring() {
+        // Three slots, and we sit at logical position 4 with a window of 3,
+        // so the attendable range is 2..=4 and lands on slots 2, 0, 1.
+        let d = AttnDims {
+            seq: 1,
+            num_heads: 1,
+            num_kv_heads: 1,
+            qk_head_dim: 1,
+            v_head_dim: 1,
+        };
+        let q = [0.0f32]; // zero query, so every score ties and weights are 1/3
+                          // slot 0 holds position 3, slot 1 position 4, slot 2 position 2.
+        let k = [1.0f32, 1.0, 1.0];
+        let v = [30.0f32, 40.0, 20.0];
+        let mut out = [0.0f32];
+        attend_step(
+            &q,
+            Ring {
+                k: &k,
+                v: &v,
+                slots: 3,
+                lo: 2,
+                hi: 4,
+            },
+            d,
+            &mut out,
+        );
+        assert!(
+            (out[0] - 30.0).abs() < 1e-5,
+            "mean of 20, 30, 40 expected, got {}",
+            out[0]
+        );
     }
 
     #[test]
