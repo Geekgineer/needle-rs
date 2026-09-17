@@ -18,5 +18,6 @@ pub mod ops;
 pub mod quant;
 pub mod rope;
 pub mod v2;
+pub mod v3;
 
 pub use config::TransformerConfig;
