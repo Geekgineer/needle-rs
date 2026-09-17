@@ -162,3 +162,32 @@ jobs:
           cargo run --release -p needle-rs-cli -- --json --max-tokens 32 \
             weights/needle2.cact "What's the weather in Paris?" \
             '[{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]'
+
+  parity-v3:
+    name: v3 parity tests (needle3.cact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Public repo, no auth needed. 35.3 MB container + its tokenizer.
+      - name: Download the v3 checkpoint from HuggingFace
+        run: |
+          pip install -q huggingface_hub
+          hf download Cactus-Compute/needle3 needle3.cact --local-dir weights/
+
+      # Container and tokenizer fixtures are tracked, so these need no JAX.
+      # They run on x86_64, so they also exercise the AVX2 dispatch in
+      # needle-core::cq against the scalar reference — the only place that
+      # path is verified, since development happens on aarch64.
+      - name: Run v3 parity tests
+        run: |
+          cargo test -p needle-infer --release --test cact_v3_parity -- --nocapture
+          cargo test -p needle-infer --release --test tokenizer_v3_parity -- --nocapture
