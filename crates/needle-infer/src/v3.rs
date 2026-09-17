@@ -5,6 +5,9 @@
 //! the bridge from a `.cact` v3 container.
 
 use needle_core::v3::kernels::{HadaMlp, HadaPerms};
+extern crate alloc;
+
+use needle_core::v3::heads::{ProbeHead, HEAD_CONFIDENCE};
 use needle_core::v3::{V3Config, V3Engram, V3EngramSite, V3Layer, V3Mhc, V3Model};
 
 use crate::cact::{CactV3, CactV3Geometry};
@@ -468,6 +471,92 @@ pub fn model_from_cact(cact: &CactV3) -> Result<V3Model, V3LoadError> {
     let final_norm = cact.floats(layout.final_norm)?;
     V3Model::new(cfg, embedding, layers, mhc, engrams, final_norm, perms)
         .map_err(V3LoadError::Shape)
+}
+
+/// Load the probe heads a container exports, keyed by head code.
+///
+/// The manifest lists which heads are present; their tensors follow in canon
+/// order, six per head. v3 exports only `confidence`, so `retrieve_tools` has
+/// no v3 equivalent — callers must check rather than assume.
+pub fn heads_from_cact(cact: &CactV3, cfg: &V3Config) -> Result<Vec<(u8, ProbeHead)>, V3LoadError> {
+    let layout = V3Layout::derive(cfg, cact.records())?;
+    let Some(manifest_idx) = layout.head_manifest else {
+        return Ok(Vec::new());
+    };
+    let codes: Vec<u8> = cact
+        .floats(manifest_idx)?
+        .into_iter()
+        .map(|c| c as u8)
+        .collect();
+
+    let mut out = Vec::new();
+    let mut it = layout.head_tensors.iter().copied();
+    for code in codes {
+        // Canon order per head: probes, gain, query, row_bias, proj, bias.
+        let mut next = || -> Result<usize, V3LoadError> {
+            it.next().ok_or(V3LoadError::Shape("head tensors ran out"))
+        };
+        let probes_i = next()?;
+        let gain_i = next()?;
+        let query_i = next()?;
+        let row_bias_i = next()?;
+        let proj_i = next()?;
+        let bias_i = next()?;
+        // The router head carries one extra tensor.
+        if code == needle_core::v3::heads::HEAD_ROUTER {
+            let _calibration = next()?;
+        }
+
+        let probes_rec = cact.record(probes_i);
+        let query_rec = cact.record(query_i);
+        let gain = cact.floats(gain_i)?;
+        let d = probes_rec.shape[1];
+
+        // One cell per layer plus the input embedding — that is what the head
+        // reads. `probes` is stored as (cells * probes, d), so the per-cell
+        // probe count follows; `gain` is the same product and cross-checks it.
+        let cells = cfg.num_layers + 1;
+        if !probes_rec.shape[0].is_multiple_of(cells) || gain.len() != probes_rec.shape[0] {
+            return Err(V3LoadError::Shape(
+                "probe head shapes disagree with num_layers + 1 cells",
+            ));
+        }
+        let probes_per_cell = probes_rec.shape[0] / cells;
+        let queries = query_rec.shape[0];
+
+        let head = ProbeHead {
+            probes: dense(cact, probes_i)?,
+            gain,
+            query: dense(cact, query_i)?,
+            row_bias: cact.floats(row_bias_i)?,
+            proj: dense(cact, proj_i)?,
+            bias: cact.floats(bias_i)?,
+            cells,
+            probes_per_cell,
+            queries,
+            out_dim: cact.record(proj_i).shape[0],
+        };
+        debug_assert_eq!(head.probes.len(), cells * probes_per_cell * d);
+        out.push((code, head));
+    }
+    Ok(out)
+}
+
+/// Dequantise a CQ tensor. Probe-head matrices are small — 84x768 on the
+/// shipped model — so packing them buys nothing and the head reads dense.
+fn dense(cact: &CactV3, idx: usize) -> Result<Vec<f32>, V3LoadError> {
+    let w = cact.cq(idx)?;
+    let mut out = alloc::vec![0.0f32; w.out_feat * w.in_feat];
+    w.dequantize_to(&mut out);
+    Ok(out)
+}
+
+/// The confidence head, if the container exports one.
+pub fn confidence_head(cact: &CactV3, cfg: &V3Config) -> Result<Option<ProbeHead>, V3LoadError> {
+    Ok(heads_from_cact(cact, cfg)?
+        .into_iter()
+        .find(|(c, _)| *c == HEAD_CONFIDENCE)
+        .map(|(_, h)| h))
 }
 
 /// Anything that can go wrong turning a container into a model.

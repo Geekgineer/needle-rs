@@ -123,3 +123,47 @@ fn temperature_zero_is_deterministic() {
     let b = e.generate("What's the weather in Paris?", TOOLS, &opts);
     assert_eq!(a.tokens, b.tokens, "greedy decoding must be reproducible");
 }
+
+#[test]
+fn confidence_scores_the_answer_not_the_question() {
+    let Some(e) = engine() else { return };
+    let query = "What's the weather in Paris?";
+    let right =
+        "<tool_call>[{\"name\":\"get_weather\",\"arguments\":{\"city\":\"Paris\"}}]</tool_call>";
+    let wrong = "<tool_call>[{\"name\":\"control_lights\",\"arguments\":{\"room\":\"Paris\",\"state\":\"on\"}}]</tool_call>";
+
+    let p_right = e.confidence_for(query, TOOLS, right).expect("head present");
+    let p_wrong = e.confidence_for(query, TOOLS, wrong).expect("head present");
+    let p_bare = e.confidence_for(query, TOOLS, "").expect("head present");
+
+    println!("confidence — right {p_right:.4}, wrong {p_wrong:.4}, bare query {p_bare:.4}");
+
+    // The property that matters: a correct completion outscores a wrong one.
+    assert!(
+        p_right > p_wrong,
+        "a correct call should outscore a wrong one: {p_right} vs {p_wrong}"
+    );
+    // And the trap worth pinning: unlike v2, where a bare query collapsed to
+    // near zero and so announced the misuse, v3 scores one comfortably high.
+    // Anyone passing a query instead of a completion gets a plausible number
+    // that means nothing, so this asserts the hazard still exists rather than
+    // quietly assuming v2's behaviour carried over.
+    assert!(
+        p_bare > 0.5,
+        "expected v3 to score a bare query high (the documented trap), got {p_bare}"
+    );
+    assert!(
+        p_right > p_bare,
+        "the real completion should still outscore a bare query: {p_right} vs {p_bare}"
+    );
+}
+
+#[test]
+fn run_scored_pairs_an_answer_with_its_confidence() {
+    let Some(e) = engine() else { return };
+    let (res, p) = e.run_scored("What's the weather in Paris?", TOOLS);
+    let p = p.expect("v3 exports a confidence head");
+    println!("answer {:?} scored {p:.4}", res.text);
+    assert!((0.0..=1.0).contains(&p), "probability out of range: {p}");
+    assert!(res.text.contains("get_weather"));
+}

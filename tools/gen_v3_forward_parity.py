@@ -142,6 +142,23 @@ def main():
     rec["stages"]["logits"] = blob.add(logits[0])
     print(f"  logits {logits.shape}  {time.time() - t2:.1f}s")
 
+
+    # Stage 5 — the confidence head. It reads the per-layer cells, not the
+    # final hidden state, so this also pins that the cells are collected in the
+    # right order.
+    cells = model.apply(
+        {"params": lm}, tokens, method=SimpleAttentionNetwork.hidden_cells
+    )
+    rec["stages"]["cells"] = blob.add(np.asarray(cells, np.float32)[0])
+    print(f"  cells {tuple(np.asarray(cells).shape)}")
+
+    conf = model.apply(
+        {"params": lm}, tokens, method=SimpleAttentionNetwork.forward_confidence
+    )
+    conf = np.asarray(conf, np.float32).reshape(-1)
+    rec["confidence_logit"] = [float(v) for v in conf]
+    print(f"  confidence logit {conf}")
+
     # A compact, high-signal summary: the greedy argmax at each position, so a
     # Rust divergence shows up as a position index rather than a float diff.
     rec["argmax"] = [int(i) for i in np.argmax(logits[0], axis=-1)]

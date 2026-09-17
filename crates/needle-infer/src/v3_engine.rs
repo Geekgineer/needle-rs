@@ -10,7 +10,8 @@ use needle_core::v3::{V3Cache, V3Model};
 use crate::cact::CactV3;
 use crate::prompt::{build_prompt, IM_END, THINK_END, THINK_START, TOOL_CALL_END, TOOL_CALL_START};
 use crate::sp_tokenizer::SpTokenizer;
-use crate::v3::{model_from_cact, V3LoadError};
+use crate::v3::{confidence_head, model_from_cact, V3LoadError};
+use needle_core::v3::heads::ProbeHead;
 
 /// Default generation cap.
 ///
@@ -68,6 +69,9 @@ pub struct V3Result {
 pub struct V3Engine {
     pub model: V3Model,
     pub tokenizer: SpTokenizer,
+    /// Present when the container exports one. v3 exports confidence only —
+    /// there is no contrastive head, so no retrieval.
+    pub confidence: Option<ProbeHead>,
     eos_id: u32,
     bos_id: u32,
     im_end_id: Option<u32>,
@@ -90,9 +94,11 @@ impl V3Engine {
         let blob = cact.tokenizer_blob().ok_or(V3EngineError::NoTokenizer)?;
         let tokenizer = SpTokenizer::from_blob(blob).map_err(|_| V3EngineError::BadTokenizer)?;
         let im_end_id = tokenizer.id_of(IM_END);
+        let confidence = confidence_head(cact, &model.cfg).map_err(V3EngineError::Load)?;
         Ok(Self {
             model,
             tokenizer,
+            confidence,
             // Upstream fixes these in `needle/model/tokenizer.py`.
             eos_id: 1,
             bos_id: 2,
@@ -204,6 +210,46 @@ impl V3Engine {
     /// a considered "no" as a failure.
     pub fn run_json(&self, query: &str, tools_json: &str) -> Option<String> {
         extract_tool_call(&self.run(query, tools_json))
+    }
+
+    /// How confident the model is in a completion it produced.
+    ///
+    /// **Pass the completion.** The head scores a finished judgement — the
+    /// formatted prompt *plus* the answer — not a question.
+    ///
+    /// v3 differs from v2 here, and the difference is a trap. On v2 a bare
+    /// query scored near zero, so the misuse announced itself; on the shipped
+    /// v3 checkpoint the same query scores 0.80 while the correct completion
+    /// scores 0.93 and a wrong one 0.26. A bare query therefore looks like a
+    /// confident answer and is not one. Measured, not assumed — see
+    /// `confidence_scores_the_answer_not_the_question`.
+    ///
+    /// Returns a probability in `(0, 1)`, or `None` when the container exports
+    /// no confidence head.
+    pub fn confidence_for(&self, query: &str, tools_json: &str, completion: &str) -> Option<f32> {
+        let head = self.confidence.as_ref()?;
+        let mut text = build_prompt(query, tools_json, None);
+        text.push_str(completion);
+
+        let mut ids = Vec::with_capacity(text.len() / 3 + 2);
+        ids.push(self.bos_id);
+        ids.extend(self.tokenizer.encode(&text));
+        ids.truncate(self.model.cfg.max_seq_len);
+
+        let cells = self.model.forward_cells(&ids);
+        let logit = head.forward(&cells, ids.len(), self.model.cfg.d_model)[0];
+        Some(1.0 / (1.0 + (-logit).exp()))
+    }
+
+    /// Generate, then score what was generated.
+    ///
+    /// Cheaper to reason about than calling [`Self::generate`] and
+    /// [`Self::confidence_for`] separately, and impossible to get the argument
+    /// order wrong.
+    pub fn run_scored(&self, query: &str, tools_json: &str) -> (V3Result, Option<f32>) {
+        let res = self.generate(query, tools_json, &V3Options::default());
+        let p = self.confidence_for(query, tools_json, &res.text);
+        (res, p)
     }
 
     /// The model's reasoning, when it emitted any.

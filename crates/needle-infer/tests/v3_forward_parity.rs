@@ -11,7 +11,7 @@
 
 use needle_core::v3::V3Cache;
 use needle_infer::cact::CactV3;
-use needle_infer::v3::model_from_cact;
+use needle_infer::v3::{confidence_head, model_from_cact};
 
 const CACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../weights/needle3.cact");
 const JSON: &str = concat!(
@@ -195,5 +195,63 @@ fn incremental_decode_reproduces_the_prefill() {
     assert!(
         rel < 1e-4,
         "decode deviates from prefill by {rel:.3e} of RMS (abs {worst:.3e})"
+    );
+}
+
+#[test]
+fn cells_and_confidence_match_the_reference() {
+    let Some(f) = Fixture::load() else { return };
+    let tokens: Vec<u32> = f.meta["tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as u32)
+        .collect();
+
+    let cact = CactV3::load(CACT).expect("load container");
+    let model = model_from_cact(&cact).expect("build model");
+    let d = model.cfg.d_model;
+    let l1 = model.cfg.num_layers + 1;
+
+    // The cells are what the probe heads read, so they are checked before the
+    // head is: a wrong cell order would otherwise surface only as a wrong
+    // scalar, with nothing to point at.
+    let got = model.forward_cells(&tokens);
+    let want = f.stage("cells");
+    assert_eq!(got.len(), want.len(), "cell count");
+    assert_eq!(got.len(), tokens.len() * l1 * d);
+
+    let mut worst = 0.0f32;
+    let mut sq = 0.0f64;
+    for (&a, &b) in got.iter().zip(&want) {
+        sq += (b as f64) * (b as f64);
+        worst = worst.max((a - b).abs());
+    }
+    let rms = (sq / want.len() as f64).sqrt() as f32;
+    println!(
+        "v3 cells: {} x {l1} x {d}, max abs {worst:.3e} vs RMS {rms:.3} = {:.3e} relative",
+        tokens.len(),
+        worst / rms
+    );
+    assert!(worst / rms < 1e-4, "cells deviate by {:.3e}", worst / rms);
+
+    // Now the head itself.
+    let head = confidence_head(&cact, &model.cfg)
+        .expect("head load")
+        .expect("v3 exports a confidence head");
+    assert_eq!(head.cells, l1);
+    assert_eq!(head.out_dim, 1);
+
+    let logit = head.forward(&got, tokens.len(), d)[0];
+    let expect = f.meta["confidence_logit"][0].as_f64().unwrap() as f32;
+    let p = 1.0 / (1.0 + (-logit).exp());
+    println!(
+        "confidence: logit {logit:.6} vs reference {expect:.6} \
+         (probability {:.4}), {} probes x {} queries",
+        p, head.probes_per_cell, head.queries
+    );
+    assert!(
+        (logit - expect).abs() < 1e-3,
+        "confidence logit {logit} vs reference {expect}"
     );
 }

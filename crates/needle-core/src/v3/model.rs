@@ -447,6 +447,20 @@ impl V3Model {
     /// the scaled embedding, each layer mixes down and scatters back, and the
     /// head is the embedding itself, sliced to `out_vocab`.
     pub fn forward_sequence(&self, tokens: &[u32]) -> Vec<f32> {
+        self.forward_impl(tokens, None)
+    }
+
+    /// Per-layer pooled states, `(seq, num_layers + 1, d_model)`.
+    ///
+    /// Cell 0 is the scaled input embedding; cell `1 + i` is the lane stream
+    /// after layer `i`, meaned over lanes. These are what the probe heads read.
+    pub fn forward_cells(&self, tokens: &[u32]) -> Vec<f32> {
+        let mut cells = Vec::new();
+        self.forward_impl(tokens, Some(&mut cells));
+        cells
+    }
+
+    fn forward_impl(&self, tokens: &[u32], mut cells: Option<&mut Vec<f32>>) -> Vec<f32> {
         let cfg = &self.cfg;
         let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
         let rows = cfg.logit_rows();
@@ -454,12 +468,21 @@ impl V3Model {
         let (ek, ev) = self.engram_kv(tokens);
 
         // Lane stream: (seq, lanes, d_model).
+        let l1 = cfg.num_layers + 1;
+        if let Some(c) = cells.as_deref_mut() {
+            c.clear();
+            c.resize(seq * l1 * d, 0.0);
+        }
         let mut lanes = vec![0.0f32; seq * n * d];
         let mut emb = vec![0.0f32; d];
         for (t, &tok) in tokens.iter().enumerate() {
             self.embedding.dequantize_row(tok as usize, &mut emb);
             for e in emb.iter_mut() {
                 *e *= self.embed_scale;
+            }
+            if let Some(c) = cells.as_deref_mut() {
+                // Cell 0 is the scaled embedding, before the lane broadcast.
+                c[(t * l1) * d..(t * l1 + 1) * d].copy_from_slice(&emb);
             }
             for lane in 0..n {
                 let off = (t * n + lane) * d;
@@ -715,6 +738,19 @@ impl V3Model {
                     },
                     &mut scratch,
                 );
+            }
+
+            if let Some(c) = cells.as_deref_mut() {
+                for t in 0..seq {
+                    let dst = &mut c[(t * l1 + li + 1) * d..(t * l1 + li + 2) * d];
+                    for (cc, o) in dst.iter_mut().enumerate() {
+                        let mut a = 0.0f32;
+                        for lane in 0..n {
+                            a += lanes[(t * n + lane) * d + cc];
+                        }
+                        *o = a / n as f32;
+                    }
+                }
             }
         }
 

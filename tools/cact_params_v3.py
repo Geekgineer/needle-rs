@@ -168,9 +168,35 @@ def rebuild(container=CONTAINER):
     manifest = np.asarray(nxt()).astype(int).tolist()
     by_code = {h.code: h for h in HEADS}
     params["_heads"] = {by_code[c].key: c for c in manifest if c in by_code}
-    # The head tensors stay raw and positional. The LM path does not need
-    # them, and rebuilding each head's tree is only worth doing when the
-    # confidence head itself is ported.
+
+    # Rebuild each head's parameter tree, inverting ProbeHead.export:
+    # probes, gain, query, row_bias, proj, bias — plus calibration for the
+    # router. `cells` is one per layer plus the input embedding.
+    l1 = cfg.num_layers + 1
+    for code in manifest:
+        head = by_code.get(code)
+        if head is None:
+            continue
+        probes = nxt()          # (l1 * k, d)
+        gain = nxt()            # (l1, k)
+        query = nxt()           # (q, d)
+        row_bias = nxt()        # (q, l1, k)
+        proj = nxt()            # (out, q * d) — exported transposed
+        bias = nxt()            # (out,)
+        k = probes.shape[0] // l1
+        d = probes.shape[1]
+        q = query.shape[0]
+        tree = {
+            "probes": probes.reshape(l1, k, d),
+            "gain": np.asarray(gain).reshape(l1, k),
+            "query": query,
+            "row_bias": np.asarray(row_bias).reshape(q, l1, k),
+            "proj": {"kernel": proj.T, "bias": np.asarray(bias)},
+        }
+        if head.key == "router_head":
+            tree["calibration"] = np.asarray(nxt())
+        params[head.key] = tree
+
     params["_head_tensors"] = [tensors[i] for i in it]
 
     return params, cfg, meta
