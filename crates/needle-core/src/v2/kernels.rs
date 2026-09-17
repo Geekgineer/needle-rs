@@ -97,6 +97,7 @@ pub fn engram_table_order(table: usize, heads: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math;
     use alloc::vec;
     use alloc::vec::Vec;
 
