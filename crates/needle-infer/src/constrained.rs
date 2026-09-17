@@ -756,6 +756,15 @@ fn json_skip_value(bytes: &[u8], i: usize) -> usize {
     }
 }
 
+/// Per-token byte table in the `(id, bytes)` form `ConstrainedDecoder` expects.
+pub fn byte_table(tok: &SpTokenizer) -> Vec<(u32, Vec<u8>)> {
+    tok.token_bytes()
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| (i as u32, b))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -904,13 +913,4 @@ mod tests {
         assert!(mask[1] < 0.0, "\" get\" (space-prefixed) should be blocked");
         assert!(mask[2] < 0.0, "\"set\" should be blocked (not in trie)");
     }
-}
-
-/// Per-token byte table in the `(id, bytes)` form `ConstrainedDecoder` expects.
-pub fn byte_table(tok: &SpTokenizer) -> Vec<(u32, Vec<u8>)> {
-    tok.token_bytes()
-        .into_iter()
-        .enumerate()
-        .map(|(i, b)| (i as u32, b))
-        .collect()
 }

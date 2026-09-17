@@ -182,7 +182,7 @@ fn run_v3(o: &Opts, model: &str) {
             .max_tokens
             .unwrap_or(needle_infer::v3_engine::DEFAULT_MAX_NEW_TOKENS),
         temperature: o.temperature.unwrap_or(0.0),
-        seed: o.seed.unwrap_or(0) as u64,
+        seed: o.seed.unwrap_or(0),
         system: o.system.clone(),
         constrain: o.constrain,
     };
