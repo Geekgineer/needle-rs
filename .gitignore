@@ -20,3 +20,7 @@ tests/e2e_vectors.json
 # tools/gen_v2_forward_parity.py (needs the JAX venv); the test skips without it.
 tests/v2_forward_vectors.f32
 tests/v2_forward_vectors.json
+
+# v3 forward-pass ladder: regenerate with tools/gen_v3_forward_parity.py
+tests/v3_forward_vectors.json
+tests/v3_forward_vectors.f32
