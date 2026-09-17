@@ -69,6 +69,12 @@ def main():
     t0 = time.time()
     params, cfg, meta = rebuild()
     lm = {k: v for k, v in params.items() if not k.startswith("_")}
+    # float32 deliberately. The config ships bfloat16, which is what upstream
+    # runs, but a bf16 oracle cannot separate "the Rust is wrong" from "bf16
+    # has three decimal digits" — against it a correct forward reads as 8e-2
+    # relative on the logits. Numeric parity is measured in f32; behavioural
+    # parity is the separate token-exact end-to-end gate.
+    cfg.dtype = "float32"
     model = SimpleAttentionNetwork(cfg)
     tok = get_tokenizer(cfg.vocab_size)
     print(f"rebuilt in {time.time() - t0:.1f}s")
@@ -96,6 +102,7 @@ def main():
             "out_vocab": int(getattr(cfg, "out_vocab", 0) or cfg.vocab_size),
             "rope_theta": float(cfg.rope_theta),
         },
+        "dtype": "float32",
         "stages": {},
     }
 

@@ -489,6 +489,42 @@ fn parse_codebook(raw: &[u8], header_bytes: usize, codebook_len: usize) -> Vec<f
         .collect()
 }
 
+/// Decode an FP16 or FP32 tensor blob. Shared by both container generations —
+/// the dtype codes and layout are identical, only the header ahead differs.
+fn decode_floats(i: usize, r: &Record, blob: &[u8]) -> Result<Vec<f32>, CactError> {
+    match r.dtype {
+        DT_FP16 => {
+            if !r.nbytes.is_multiple_of(2) {
+                return Err(CactError::RaggedBlob {
+                    index: i,
+                    nbytes: r.nbytes,
+                });
+            }
+            Ok(blob
+                .chunks_exact(2)
+                .map(|c| f16_to_f32(u16::from_le_bytes([c[0], c[1]])))
+                .collect())
+        }
+        DT_FP32 => {
+            if !r.nbytes.is_multiple_of(4) {
+                return Err(CactError::RaggedBlob {
+                    index: i,
+                    nbytes: r.nbytes,
+                });
+            }
+            Ok(blob
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect())
+        }
+        got => Err(CactError::DtypeMismatch {
+            index: i,
+            want: DT_FP16,
+            got,
+        }),
+    }
+}
+
 pub struct Cact {
     raw: Vec<u8>,
     pub geom: CactGeometry,
@@ -597,39 +633,7 @@ impl Cact {
 
     /// Decode an FP16 or FP32 tensor to `f32`.
     pub fn floats(&self, i: usize) -> Result<Vec<f32>, CactError> {
-        let r = &self.records[i];
-        let blob = self.blob(i);
-        match r.dtype {
-            DT_FP16 => {
-                if !r.nbytes.is_multiple_of(2) {
-                    return Err(CactError::RaggedBlob {
-                        index: i,
-                        nbytes: r.nbytes,
-                    });
-                }
-                Ok(blob
-                    .chunks_exact(2)
-                    .map(|c| f16_to_f32(u16::from_le_bytes([c[0], c[1]])))
-                    .collect())
-            }
-            DT_FP32 => {
-                if !r.nbytes.is_multiple_of(4) {
-                    return Err(CactError::RaggedBlob {
-                        index: i,
-                        nbytes: r.nbytes,
-                    });
-                }
-                Ok(blob
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect())
-            }
-            got => Err(CactError::DtypeMismatch {
-                index: i,
-                want: DT_FP16,
-                got,
-            }),
-        }
+        decode_floats(i, &self.records[i], self.blob(i))
     }
 
     /// Parse a CQ tensor. Shape must be 2-D `[out, in]`.
@@ -1087,6 +1091,11 @@ impl CactV3 {
             r.bits,
             &self.codebook,
         )?)
+    }
+
+    /// Decode an FP16 or FP32 tensor.
+    pub fn floats(&self, i: usize) -> Result<Vec<f32>, CactError> {
+        decode_floats(i, &self.records[i], self.blob(i))
     }
 }
 

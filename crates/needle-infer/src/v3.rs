@@ -4,9 +4,10 @@
 //! ([`V3Config`]) and weights as [`needle_core::cq::CqWeight`]. This module is
 //! the bridge from a `.cact` v3 container.
 
-use needle_core::v3::{V3Config, V3Engram};
+use needle_core::v3::kernels::{HadaMlp, HadaPerms};
+use needle_core::v3::{V3Config, V3Engram, V3EngramSite, V3Layer, V3Mhc, V3Model};
 
-use crate::cact::CactV3Geometry;
+use crate::cact::{CactV3, CactV3Geometry};
 
 /// Derive the core geometry from what a v3 container declares.
 ///
@@ -21,7 +22,7 @@ pub fn config_from_geometry(g: &CactV3Geometry) -> Result<V3Config, V3GeometryEr
     if orders.is_empty() {
         return Err(V3GeometryError::NoEngramOrders);
     }
-    if g.num_engram_tables % orders.len() != 0 {
+    if !g.num_engram_tables.is_multiple_of(orders.len()) {
         return Err(V3GeometryError::TableCountNotDivisible {
             tables: g.num_engram_tables,
             orders: orders.len(),
@@ -35,7 +36,7 @@ pub fn config_from_geometry(g: &CactV3Geometry) -> Result<V3Config, V3GeometryEr
             derived: expect_sub_dim,
         });
     }
-    if g.num_kv_heads == 0 || g.num_heads % g.num_kv_heads != 0 {
+    if g.num_kv_heads == 0 || !g.num_heads.is_multiple_of(g.num_kv_heads) {
         return Err(V3GeometryError::HeadsNotDivisible {
             heads: g.num_heads,
             kv_heads: g.num_kv_heads,
@@ -376,6 +377,138 @@ impl V3Layout {
         Ok(())
     }
 }
+
+/// Build a [`V3Model`] from a loaded container.
+///
+/// Weights stay packed: `CqWeight` holds the 2- and 4-bit tensors and is
+/// matvec'd directly, so the 35 MB container never expands to a dense copy.
+/// Only the FP16/FP32 vectors — norms, gates, diagonals, Kronecker factors and
+/// the Hadamard permutations — are decoded to `f32`.
+pub fn model_from_cact(cact: &CactV3) -> Result<V3Model, V3LoadError> {
+    let cfg = config_from_geometry(&cact.geom)?;
+    let layout = V3Layout::derive(&cfg, cact.records())?;
+
+    let embedding = cact.cq(layout.embedding)?;
+
+    let mut layers = Vec::with_capacity(cfg.num_layers);
+    for l in &layout.layers {
+        let (q_taps, k_taps, v_taps) = match l.qkv_taps {
+            Some([q, k, v]) => (cact.floats(q)?, cact.floats(k)?, cact.floats(v)?),
+            None => (Vec::new(), Vec::new(), Vec::new()),
+        };
+        let m = l.mlp;
+        layers.push(V3Layer {
+            norm_in: cact.floats(l.norm_in)?,
+            q_proj: cact.cq(l.q_proj)?,
+            k_proj: cact.cq(l.k_proj)?,
+            v_proj: cact.cq(l.v_proj)?,
+            q_taps,
+            k_taps,
+            v_taps,
+            q_norm: cact.floats(l.q_norm)?,
+            k_norm: cact.floats(l.k_norm)?,
+            gate_proj: cact.cq(l.gate_proj)?,
+            out_proj: cact.cq(l.out_proj)?,
+            post_norm: cact.floats(l.post_norm)?,
+            attn_gate: *cact
+                .floats(l.attn_gate)?
+                .first()
+                .ok_or(V3LoadError::EmptyScalar("attn_gate"))?,
+            pre_hada: cact.floats(l.pre_hada)?,
+            // Canon order: d1, d2, b2, d3, d4, w1a, w1b, w2a, w2b, w3a, w3b,
+            // cond_v, cond_u.
+            mlp: HadaMlp {
+                d1: cact.floats(m[0])?,
+                d2: cact.floats(m[1])?,
+                b2: cact.floats(m[2])?,
+                d3: cact.floats(m[3])?,
+                d4: cact.floats(m[4])?,
+                w1: (cact.floats(m[5])?, cact.floats(m[6])?),
+                w2: (cact.floats(m[7])?, cact.floats(m[8])?),
+                w3: (cact.floats(m[9])?, cact.floats(m[10])?),
+                cond_v: cact.floats(m[11])?,
+                cond_u: cact.floats(m[12])?,
+                cond_rank: cact.record(m[11]).shape[1],
+            },
+        });
+    }
+
+    let sc = layout.mhc.scalars;
+    let phi = layout.mhc.phi;
+    let mhc = V3Mhc {
+        a_pre: cact.floats(sc[0])?,
+        a_post: cact.floats(sc[1])?,
+        a_res: cact.floats(sc[2])?,
+        b_pre: cact.floats(sc[3])?,
+        b_post: cact.floats(sc[4])?,
+        b_res: cact.floats(sc[5])?,
+        phi_pre: cact.cq(phi[0])?,
+        phi_post: cact.cq(phi[1])?,
+        phi_res: cact.cq(phi[2])?,
+    };
+
+    let mut engrams = Vec::with_capacity(layout.engrams.len());
+    for e in &layout.engrams {
+        engrams.push(V3EngramSite {
+            tables: cact.cq(e.tables)?,
+            key_proj: cact.cq(e.key_proj)?,
+            value_proj: cact.cq(e.value_proj)?,
+            taps: cact.floats(e.taps)?,
+        });
+    }
+
+    // The permutations ride as FP32 because upstream derives them from a
+    // seeded RNG no runtime can reproduce.
+    let to_perm = |v: Vec<f32>| -> Vec<u32> { v.into_iter().map(|x| x as u32).collect() };
+    let perms = HadaPerms {
+        p1: to_perm(cact.floats(layout.hada_perms[0])?),
+        p2: to_perm(cact.floats(layout.hada_perms[1])?),
+    };
+
+    let final_norm = cact.floats(layout.final_norm)?;
+    V3Model::new(cfg, embedding, layers, mhc, engrams, final_norm, perms)
+        .map_err(V3LoadError::Shape)
+}
+
+/// Anything that can go wrong turning a container into a model.
+#[derive(Debug)]
+pub enum V3LoadError {
+    Cact(crate::cact::CactError),
+    Geometry(V3GeometryError),
+    Layout(V3LayoutError),
+    EmptyScalar(&'static str),
+    Shape(&'static str),
+}
+
+impl From<crate::cact::CactError> for V3LoadError {
+    fn from(e: crate::cact::CactError) -> Self {
+        Self::Cact(e)
+    }
+}
+impl From<V3GeometryError> for V3LoadError {
+    fn from(e: V3GeometryError) -> Self {
+        Self::Geometry(e)
+    }
+}
+impl From<V3LayoutError> for V3LoadError {
+    fn from(e: V3LayoutError) -> Self {
+        Self::Layout(e)
+    }
+}
+
+impl core::fmt::Display for V3LoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cact(e) => write!(f, "container: {e}"),
+            Self::Geometry(e) => write!(f, "geometry: {e}"),
+            Self::Layout(e) => write!(f, "layout: {e}"),
+            Self::EmptyScalar(w) => write!(f, "{w} tensor is empty"),
+            Self::Shape(w) => write!(f, "{w}"),
+        }
+    }
+}
+
+impl std::error::Error for V3LoadError {}
 
 #[cfg(test)]
 mod tests {

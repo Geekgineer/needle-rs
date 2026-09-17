@@ -94,6 +94,10 @@ pub fn engram_table_order(table: usize, heads: usize) -> usize {
     table / heads
 }
 
+/// Geometry-free primitives now shared with v3. Re-exported so existing v2
+/// call sites keep their import path.
+pub use crate::kernels::{rms_unit, rms_unit_to, sinkhorn, EPS, SINKHORN_ITERS};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,7 +334,3 @@ mod tests {
         );
     }
 }
-
-/// Geometry-free primitives now shared with v3. Re-exported so existing v2
-/// call sites keep their import path.
-pub use crate::kernels::{rms_unit, rms_unit_to, sinkhorn, EPS, SINKHORN_ITERS};

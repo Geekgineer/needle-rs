@@ -23,6 +23,23 @@ extern crate alloc;
 use crate::kernels::sinkhorn;
 use crate::ops::sigmoid;
 
+/// Where in the stack a routing step is happening.
+#[derive(Debug, Clone, Copy)]
+pub struct LaneSite {
+    pub layer: usize,
+    pub lanes: usize,
+    pub d_model: usize,
+}
+
+/// The two projected gate vectors, overwritten in place with the gates
+/// actually applied.
+pub struct Gates<'a> {
+    /// `nx · φ_post`, `lanes` long.
+    pub post: &'a mut [f32],
+    /// `nx · φ_res`, `lanes * lanes` long.
+    pub res: &'a mut [f32],
+}
+
 /// Per-layer mHC scalars and biases, already sliced to one layer.
 pub struct MhcLayer<'a> {
     pub a_pre: f32,
@@ -91,15 +108,21 @@ pub fn mix_down(
 /// the gates actually applied. `y` is `block(u) - u`.
 pub fn scatter_up(
     lanes_buf: &mut [f32],
-    phi_post_rows: &mut [f32],
-    phi_res_rows: &mut [f32],
+    gates: Gates<'_>,
     y: &[f32],
     m: &MhcLayer<'_>,
-    layer: usize,
-    lanes: usize,
-    d_model: usize,
+    at: LaneSite,
     scratch: &mut [f32],
 ) {
+    let Gates {
+        post: phi_post_rows,
+        res: phi_res_rows,
+    } = gates;
+    let LaneSite {
+        layer,
+        lanes,
+        d_model,
+    } = at;
     debug_assert_eq!(lanes_buf.len(), lanes * d_model);
     debug_assert_eq!(phi_post_rows.len(), lanes);
     debug_assert_eq!(phi_res_rows.len(), lanes * lanes);
@@ -194,13 +217,17 @@ mod tests {
         let mut scratch = vec![0.0f32; lanes * d];
         scatter_up(
             &mut buf,
-            &mut post,
-            &mut res,
+            Gates {
+                post: &mut post,
+                res: &mut res,
+            },
             &y,
             &m,
-            0,
-            lanes,
-            d,
+            LaneSite {
+                layer: 0,
+                lanes,
+                d_model: d,
+            },
             &mut scratch,
         );
         let after: f32 = buf.iter().sum();

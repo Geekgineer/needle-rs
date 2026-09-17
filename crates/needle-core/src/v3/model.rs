@@ -1,0 +1,405 @@
+//! Needle 3 model: weights and the whole-sequence forward pass.
+//!
+//! This is the prefill form — it computes every position at once, exactly as
+//! upstream's training graph does, and is what parity is established against.
+//! Incremental decode with a KV cache is layered on afterwards; getting the
+//! order the other way round means debugging a cache against logits that were
+//! never verified.
+
+extern crate alloc;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::cq::CqWeight;
+use crate::kernels::rms_unit_to;
+use crate::math::{cos, sin, sqrt};
+use crate::norm::zc_rms_norm_vec;
+use crate::ops::sigmoid;
+use crate::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
+use crate::v3::config::V3Config;
+use crate::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
+use crate::v3::kernels::{hadamard_mlp, HadaMlp, HadaPerms};
+use crate::v3::mhc::{mix_down, scatter_up, Gates, LaneSite, MhcLayer};
+
+/// One transformer layer's weights.
+pub struct V3Layer {
+    pub norm_in: Vec<f32>,
+    pub q_proj: CqWeight,
+    pub k_proj: CqWeight,
+    pub v_proj: CqWeight,
+    /// `(taps, dim)` each; empty when the model declares no conv.
+    pub q_taps: Vec<f32>,
+    pub k_taps: Vec<f32>,
+    pub v_taps: Vec<f32>,
+    /// Per-head-dim ZCRMSNorm scales, `qk_head_dim` long.
+    pub q_norm: Vec<f32>,
+    pub k_norm: Vec<f32>,
+    pub gate_proj: CqWeight,
+    pub out_proj: CqWeight,
+    pub post_norm: Vec<f32>,
+    /// Stored pre-sigmoid, as upstream stores it.
+    pub attn_gate: f32,
+    pub pre_hada: Vec<f32>,
+    pub mlp: HadaMlp,
+}
+
+/// mHC parameters for the whole stack.
+pub struct V3Mhc {
+    /// `[num_layers]` each.
+    pub a_pre: Vec<f32>,
+    pub a_post: Vec<f32>,
+    pub a_res: Vec<f32>,
+    /// `[num_layers * lanes]`.
+    pub b_pre: Vec<f32>,
+    pub b_post: Vec<f32>,
+    /// `[num_layers * lanes * lanes]`.
+    pub b_res: Vec<f32>,
+    /// `[num_layers * lanes, mhc_width]` — row `layer * lanes + lane`.
+    pub phi_pre: CqWeight,
+    pub phi_post: CqWeight,
+    /// `[num_layers * lanes², mhc_width]`.
+    pub phi_res: CqWeight,
+}
+
+/// One Engram site.
+pub struct V3EngramSite {
+    /// `[num_tables * slots, sub_dim]`.
+    pub tables: CqWeight,
+    pub key_proj: CqWeight,
+    pub value_proj: CqWeight,
+    /// `[conv_taps, d_model]`.
+    pub taps: Vec<f32>,
+}
+
+/// A loaded Needle 3 model.
+pub struct V3Model {
+    pub cfg: V3Config,
+    /// Tied embedding, `[vocab_size, d_model]` — also the LM head.
+    pub embedding: CqWeight,
+    pub layers: Vec<V3Layer>,
+    pub mhc: V3Mhc,
+    pub engrams: Vec<V3EngramSite>,
+    pub final_norm: Vec<f32>,
+    pub perms: HadaPerms,
+    embed_scale: f32,
+}
+
+impl V3Model {
+    pub fn new(
+        cfg: V3Config,
+        embedding: CqWeight,
+        layers: Vec<V3Layer>,
+        mhc: V3Mhc,
+        engrams: Vec<V3EngramSite>,
+        final_norm: Vec<f32>,
+        perms: HadaPerms,
+    ) -> Result<Self, &'static str> {
+        if layers.len() != cfg.num_layers {
+            return Err("layer count does not match geometry");
+        }
+        if engrams.len() != cfg.engram.sites.len() {
+            return Err("engram site count does not match geometry");
+        }
+        if embedding.out_feat != cfg.vocab_size || embedding.in_feat != cfg.d_model {
+            return Err("embedding shape does not match geometry");
+        }
+        let embed_scale = sqrt(cfg.d_model as f32);
+        Ok(Self {
+            cfg,
+            embedding,
+            layers,
+            mhc,
+            engrams,
+            final_norm,
+            perms,
+            embed_scale,
+        })
+    }
+
+    /// RoPE tables for `seq` positions: `(seq, qk_head_dim / 2)` each.
+    fn rope(&self, seq: usize) -> (Vec<f32>, Vec<f32>) {
+        let half = self.cfg.qk_head_dim / 2;
+        let mut c = vec![0.0f32; seq * half];
+        let mut s = vec![0.0f32; seq * half];
+        for i in 0..half {
+            let freq = 1.0
+                / powf_f32(
+                    self.cfg.rope_theta,
+                    (2 * i) as f32 / self.cfg.qk_head_dim as f32,
+                );
+            for t in 0..seq {
+                let angle = t as f32 * freq;
+                c[t * half + i] = cos(angle);
+                s[t * half + i] = sin(angle);
+            }
+        }
+        (c, s)
+    }
+
+    /// Engram keys and values for every site, `(sites, seq, d_model)` each.
+    fn engram_kv(&self, tokens: &[u32]) -> (Vec<f32>, Vec<f32>) {
+        let cfg = &self.cfg;
+        let seq = tokens.len();
+        let d = cfg.d_model;
+        let e = &cfg.engram;
+        let dims = EngramDims {
+            num_tables: e.num_tables(),
+            slots: e.slots,
+            sub_dim: e.sub_dim,
+            d_model: d,
+            conv_taps: e.conv_taps,
+            conv_dilation: e.conv_dilation,
+            max_order: *e.orders.iter().max().unwrap_or(&1),
+        };
+        let indices = engram_indices(tokens, &e.orders, e.heads, e.slots as u32, e.seed_heads);
+
+        let sites = e.sites.len();
+        let mut ks = vec![0.0f32; sites * seq * d];
+        let mut vs = vec![0.0f32; sites * seq * d];
+        let fetch_dim = dims.num_tables * dims.sub_dim;
+        let mut fetched = vec![0.0f32; fetch_dim];
+        let mut row = vec![0.0f32; dims.sub_dim];
+
+        for (s, site) in self.engrams.iter().enumerate() {
+            for p in 0..seq {
+                for t in 0..dims.num_tables {
+                    let dst = &mut fetched[t * dims.sub_dim..(t + 1) * dims.sub_dim];
+                    if ngram_valid(p, t, &e.orders, e.heads) {
+                        let slot = indices[p * dims.num_tables + t] as usize;
+                        site.tables.dequantize_row(t * dims.slots + slot, &mut row);
+                        dst.copy_from_slice(&row);
+                    } else {
+                        dst.fill(0.0);
+                    }
+                }
+                let base = (s * seq + p) * d;
+                site.key_proj.matvec(&fetched, &mut ks[base..base + d]);
+                site.value_proj.matvec(&fetched, &mut vs[base..base + d]);
+            }
+            let off = s * seq * d;
+            value_conv(&mut vs[off..off + seq * d], &site.taps, seq, &dims);
+        }
+        (ks, vs)
+    }
+
+    /// Logits for every position, `(seq, logit_rows)` row-major.
+    ///
+    /// Mirrors upstream's graph: the lane stream carries `mhc_lanes` copies of
+    /// the scaled embedding, each layer mixes down and scatters back, and the
+    /// head is the embedding itself, sliced to `out_vocab`.
+    pub fn forward_sequence(&self, tokens: &[u32]) -> Vec<f32> {
+        let cfg = &self.cfg;
+        let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
+        let rows = cfg.logit_rows();
+        let (rc, rs) = self.rope(seq);
+        let (ek, ev) = self.engram_kv(tokens);
+
+        // Lane stream: (seq, lanes, d_model).
+        let mut lanes = vec![0.0f32; seq * n * d];
+        let mut emb = vec![0.0f32; d];
+        for (t, &tok) in tokens.iter().enumerate() {
+            self.embedding.dequantize_row(tok as usize, &mut emb);
+            for e in emb.iter_mut() {
+                *e *= self.embed_scale;
+            }
+            for lane in 0..n {
+                let off = (t * n + lane) * d;
+                lanes[off..off + d].copy_from_slice(&emb);
+            }
+        }
+
+        let dims = AttnDims {
+            seq,
+            num_heads: cfg.num_heads,
+            num_kv_heads: cfg.num_kv_heads,
+            qk_head_dim: cfg.qk_head_dim,
+            v_head_dim: cfg.v_head_dim,
+        };
+        let (q_dim, k_dim, v_dim) = (cfg.q_dim(), cfg.k_dim(), cfg.v_dim());
+        let o_dim = cfg.attn_out_dim();
+
+        let mut nx = vec![0.0f32; n * d];
+        let mut nx_prep = vec![0.0f32; self.mhc.phi_pre.prepared_len()];
+        let mut hpre = vec![0.0f32; n];
+        let mut hpost = vec![0.0f32; n];
+        let mut hres = vec![0.0f32; n * n];
+        let mut scratch = vec![0.0f32; n * d];
+
+        let mut u = vec![0.0f32; seq * d];
+        let mut bx = vec![0.0f32; seq * d];
+        let mut q = vec![0.0f32; seq * q_dim];
+        let mut k = vec![0.0f32; seq * k_dim];
+        let mut v = vec![0.0f32; seq * v_dim];
+        let mut attn = vec![0.0f32; seq * o_dim];
+        let mut gate = vec![0.0f32; o_dim];
+        let mut proj = vec![0.0f32; d];
+        let mut mlp_out = vec![0.0f32; d];
+
+        for li in 0..cfg.num_layers {
+            let layer = &self.layers[li];
+            let m = MhcLayer {
+                a_pre: self.mhc.a_pre[li],
+                a_post: self.mhc.a_post[li],
+                a_res: self.mhc.a_res[li],
+                b_pre: &self.mhc.b_pre[li * n..(li + 1) * n],
+                b_post: &self.mhc.b_post[li * n..(li + 1) * n],
+                b_res: &self.mhc.b_res[li * n * n..(li + 1) * n * n],
+            };
+
+            // Mix the lanes down to this layer's block input, per position.
+            for t in 0..seq {
+                let lane_slice = &lanes[t * n * d..(t + 1) * n * d];
+                rms_unit_to(lane_slice, &mut nx);
+                self.mhc.phi_pre.prepare_input(&nx, &mut nx_prep);
+                self.mhc
+                    .phi_pre
+                    .matvec_rows_prepared(&nx_prep, li * n, &mut hpre);
+                mix_down(
+                    lane_slice,
+                    &mut hpre,
+                    &m,
+                    li,
+                    n,
+                    d,
+                    &mut u[t * d..(t + 1) * d],
+                );
+            }
+
+            // Engram gate, if this layer carries a site.
+            bx.copy_from_slice(&u);
+            if let Some(site) = cfg.engram.site_of(li) {
+                for t in 0..seq {
+                    let base = (site * seq + t) * d;
+                    crate::v3::engram::apply_site(
+                        &mut bx[t * d..(t + 1) * d],
+                        &ek[base..base + d],
+                        &ev[base..base + d],
+                        d,
+                    );
+                }
+            }
+
+            // ── Block ────────────────────────────────────────────────────
+            // Pre-attention norm, then projections over the whole sequence.
+            let mut h = bx.clone();
+            for t in 0..seq {
+                zc_rms_norm_vec(&mut h[t * d..(t + 1) * d], &layer.norm_in);
+                let ht = &h[t * d..(t + 1) * d];
+                layer.q_proj.matvec(ht, &mut q[t * q_dim..(t + 1) * q_dim]);
+                layer.k_proj.matvec(ht, &mut k[t * k_dim..(t + 1) * k_dim]);
+                layer.v_proj.matvec(ht, &mut v[t * v_dim..(t + 1) * v_dim]);
+            }
+
+            if cfg.qkv_conv_taps > 0 {
+                causal_depthwise_conv(&mut q, &layer.q_taps, seq, q_dim, cfg.qkv_conv_taps);
+                causal_depthwise_conv(&mut k, &layer.k_taps, seq, k_dim, cfg.qkv_conv_taps);
+                causal_depthwise_conv(&mut v, &layer.v_taps, seq, v_dim, cfg.qkv_conv_taps);
+            }
+            norm_and_rope(
+                &mut q,
+                &layer.q_norm,
+                &rc,
+                &rs,
+                seq,
+                cfg.num_heads,
+                cfg.qk_head_dim,
+            );
+            norm_and_rope(
+                &mut k,
+                &layer.k_norm,
+                &rc,
+                &rs,
+                seq,
+                cfg.num_kv_heads,
+                cfg.qk_head_dim,
+            );
+
+            attend(&q, &k, &v, dims, cfg.attention_span(li), &mut attn);
+
+            let agate = sigmoid(layer.attn_gate);
+            for t in 0..seq {
+                // Sigmoid gate on the attention output, then out_proj.
+                layer.gate_proj.matvec(&h[t * d..(t + 1) * d], &mut gate);
+                let a = &mut attn[t * o_dim..(t + 1) * o_dim];
+                for (ai, &gi) in a.iter_mut().zip(gate.iter()) {
+                    *ai *= sigmoid(gi);
+                }
+                layer.out_proj.matvec(a, &mut proj);
+                zc_rms_norm_vec(&mut proj, &layer.post_norm);
+
+                // Attention residual, then the MLP residual.
+                let s1 = &mut bx[t * d..(t + 1) * d];
+                for (si, &pi) in s1.iter_mut().zip(proj.iter()) {
+                    *si += agate * pi;
+                }
+                proj.copy_from_slice(s1);
+                zc_rms_norm_vec(&mut proj, &layer.pre_hada);
+                hadamard_mlp(&proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
+                for (si, &mi) in s1.iter_mut().zip(mlp_out.iter()) {
+                    *si += mi;
+                }
+            }
+
+            // Scatter the block delta back across the lanes.
+            for t in 0..seq {
+                let lane_slice = &lanes[t * n * d..(t + 1) * n * d];
+                rms_unit_to(lane_slice, &mut nx);
+                self.mhc.phi_post.prepare_input(&nx, &mut nx_prep);
+                self.mhc
+                    .phi_post
+                    .matvec_rows_prepared(&nx_prep, li * n, &mut hpost);
+                self.mhc.phi_res.prepare_input(&nx, &mut nx_prep);
+                self.mhc
+                    .phi_res
+                    .matvec_rows_prepared(&nx_prep, li * n * n, &mut hres);
+
+                // y = block(u) - u
+                let mut y = vec![0.0f32; d];
+                for c in 0..d {
+                    y[c] = bx[t * d + c] - u[t * d + c];
+                }
+                scatter_up(
+                    &mut lanes[t * n * d..(t + 1) * n * d],
+                    Gates {
+                        post: &mut hpost,
+                        res: &mut hres,
+                    },
+                    &y,
+                    &m,
+                    LaneSite {
+                        layer: li,
+                        lanes: n,
+                        d_model: d,
+                    },
+                    &mut scratch,
+                );
+            }
+        }
+
+        // Mean over lanes, final norm, tied head.
+        let mut logits = vec![0.0f32; seq * rows];
+        let mut x = vec![0.0f32; d];
+        let mut lm_prep = vec![0.0f32; self.embedding.prepared_len()];
+        let mut full = vec![0.0f32; self.cfg.vocab_size];
+        for t in 0..seq {
+            for c in 0..d {
+                let mut acc = 0.0f32;
+                for lane in 0..n {
+                    acc += lanes[(t * n + lane) * d + c];
+                }
+                x[c] = acc / n as f32;
+            }
+            zc_rms_norm_vec(&mut x, &self.final_norm);
+            self.embedding.prepare_input(&x, &mut lm_prep);
+            self.embedding.matvec_prepared(&lm_prep, &mut full);
+            logits[t * rows..(t + 1) * rows].copy_from_slice(&full[..rows]);
+        }
+        logits
+    }
+}
+
+/// `base^exp` for the RoPE frequency table. `crate::math::powf` exists but is
+/// spelled differently across the `std` and `libm` backends.
+fn powf_f32(base: f32, exp: f32) -> f32 {
+    crate::math::powf(base, exp)
+}
