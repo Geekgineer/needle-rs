@@ -19,15 +19,10 @@ use needle_core::v2::{
 };
 use std::path::Path;
 
-/// Chat-template markers, as `needle/model/finetune.py` assembles them.
-pub const IM_START: &str = "<|im_start|>";
-pub const IM_END: &str = "<|im_end|>";
-pub const TOOLS_START: &str = "<tools>";
-pub const TOOLS_END: &str = "</tools>";
-pub const TOOL_CALL_START: &str = "<tool_call>";
-pub const TOOL_CALL_END: &str = "</tool_call>";
-pub const THINK_START: &str = "<think>";
-pub const THINK_END: &str = "</think>";
+pub use crate::prompt::{
+    build_prompt as build_chat_prompt, compact_json, IM_END, IM_START, THINK_END, THINK_START,
+    TOOLS_END, TOOLS_START, TOOL_CALL_END, TOOL_CALL_START,
+};
 
 /// Default generation cap.
 pub const DEFAULT_MAX_NEW_TOKENS: usize = 128;
@@ -180,27 +175,7 @@ impl V2Engine {
     /// yields `[{"name":"get_weather",...}]` compact and `[]` pretty-printed.
     /// Rather than make that a documented gotcha, the whitespace is removed here.
     pub fn build_prompt(query: &str, tools_json: &str, system: Option<&str>) -> String {
-        let tools_json = &compact_json(tools_json);
-        let mut p = String::new();
-        if let Some(s) = system {
-            p.push_str(IM_START);
-            p.push_str("system\n");
-            p.push_str(s);
-            p.push_str(IM_END);
-            p.push('\n');
-        }
-        p.push_str(IM_START);
-        p.push_str("user\n");
-        p.push_str(TOOLS_START);
-        p.push_str(tools_json);
-        p.push_str(TOOLS_END);
-        p.push('\n');
-        p.push_str(query);
-        p.push_str(IM_END);
-        p.push('\n');
-        p.push_str(IM_START);
-        p.push_str("assistant\n");
-        p
+        crate::prompt::build_prompt(query, tools_json, system)
     }
 
     /// Greedy tool call for one query.
@@ -650,41 +625,6 @@ impl V2Engine {
         scored.truncate(top_k);
         scored
     }
-}
-
-/// Strip insignificant whitespace from JSON, leaving string literals untouched.
-///
-/// Deliberately not a parser: it does not validate, and anything it cannot
-/// interpret it passes through byte for byte, so a malformed schema reaches the
-/// model exactly as the caller wrote it rather than being silently mangled.
-/// Already-compact input is returned unchanged, which is why this cannot move the
-/// end-to-end parity fixtures.
-fn compact_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_string = false;
-    let mut escaped = false;
-    for c in s.chars() {
-        if in_string {
-            out.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match c {
-            '"' => {
-                in_string = true;
-                out.push(c);
-            }
-            ' ' | '\t' | '\n' | '\r' => {}
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// Per-token byte table in the `(id, bytes)` form `ConstrainedDecoder` expects.
