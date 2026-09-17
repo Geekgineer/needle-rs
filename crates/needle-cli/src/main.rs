@@ -1,4 +1,6 @@
+use needle_infer::cact::{TAG, TAG_V3};
 use needle_infer::v2_engine::{GenerateOptions, V2Engine};
+use needle_infer::v3_engine::{V3Engine, V3Options};
 use needle_infer::NeedleEngine;
 use std::env;
 use std::io::Write as IoWrite;
@@ -6,15 +8,16 @@ use std::process;
 
 const USAGE: &str = "\
 Usage:
-  needle-rs [OPTIONS] <model.cact> <query> <tools_json>                 (Needle v2)
+  needle-rs [OPTIONS] <model.cact> <query> <tools_json>          (Needle 3 or 2)
   needle-rs [OPTIONS] <weights.safetensors> <vocab.txt> <query> <tools_json>   (v1)
 
-The model version is taken from the file: a `.cact` container carries its own
-geometry and tokenizer, so it needs no vocabulary argument. A `.safetensors`
-file is the v1 format and needs one.
+The model version is taken from the file itself, not its name: a `.cact`
+container states its generation in its first word and carries its own geometry
+and tokenizer, so it needs no vocabulary argument. A `.safetensors` file is the
+v1 format and needs one.
 
 Arguments:
-  model       Path to a .cact container (v2) or .safetensors weights (v1)
+  model       Path to a .cact container (v3 or v2) or .safetensors weights (v1)
   vocab       v1 only: vocabulary text file, one piece per line
   query       User query string
   tools       JSON array of tool definitions
@@ -132,10 +135,83 @@ fn main() {
     }
     let model = o.positional[0].clone();
 
+    // Both v2 and v3 ship as `.cact`, so the generation comes from the
+    // container's own tag rather than the file name. Guessing from the
+    // extension would load a v3 model into the v2 engine and misread a
+    // 196-byte header as 120.
     if model.ends_with(".cact") {
-        run_v2(&o, &model);
+        match container_tag(&model) {
+            Some(TAG_V3) => run_v3(&o, &model),
+            Some(TAG) => run_v2(&o, &model),
+            Some(other) => fail(&format!(
+                "{model}: not a Needle container (tag {other:#010x})"
+            )),
+            None => fail(&format!("{model}: could not read the container header")),
+        }
     } else {
         run_v1(&o, &model);
+    }
+}
+
+/// Read the first word of a container, which states its generation.
+fn container_tag(path: &str) -> Option<u32> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut w = [0u8; 4];
+    f.read_exact(&mut w).ok()?;
+    Some(u32::from_le_bytes(w))
+}
+
+fn run_v3(o: &Opts, model: &str) {
+    if o.positional.len() < 3 {
+        fail(&format!(
+            "a .cact model takes <query> and <tools_json> (its tokenizer is embedded)\n\n{USAGE}"
+        ));
+    }
+    let (query, tools) = (&o.positional[1], &o.positional[2]);
+
+    if o.constrain {
+        eprintln!("note: --constrain is not yet wired for Needle 3; ignoring");
+    }
+    if o.prefill_chunk.is_some() {
+        eprintln!("note: --prefill-chunk applies to Needle 2 only; ignoring");
+    }
+
+    let engine =
+        V3Engine::load(model).unwrap_or_else(|e| fail(&format!("Failed to load {model}: {e}")));
+    let opts = V3Options {
+        // v3 reasons before answering, so it needs more room than v2's 128.
+        max_new_tokens: o
+            .max_tokens
+            .unwrap_or(needle_infer::v3_engine::DEFAULT_MAX_NEW_TOKENS),
+        temperature: o.temperature.unwrap_or(0.0),
+        seed: o.seed.unwrap_or(0) as u64,
+        system: o.system.clone(),
+    };
+
+    let result = if o.stream {
+        let stderr = std::io::stderr();
+        let r = engine.generate_with(query, tools, &opts, |_id, piece| {
+            let mut h = stderr.lock();
+            let _ = write!(h, "{piece}");
+            let _ = h.flush();
+        });
+        eprintln!();
+        r
+    } else {
+        engine.generate(query, tools, &opts)
+    };
+
+    if o.json_only {
+        match needle_infer::v3_engine::extract_tool_call(&result.text) {
+            Some(tc) => println!("{tc}"),
+            None => {
+                eprintln!("no <tool_call> in the output");
+                process::exit(2);
+            }
+        }
+    } else {
+        println!("{}", result.text);
     }
 }
 
