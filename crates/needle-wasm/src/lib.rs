@@ -20,6 +20,7 @@
 //! its own tokenizer, so `load` takes bytes only and there is no vocab argument.
 
 pub mod v2;
+pub mod v3;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
