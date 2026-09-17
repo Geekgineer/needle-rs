@@ -6,7 +6,6 @@
 
 use crate::hadamard::fwht_normalized;
 use crate::math;
-use crate::ops::sigmoid;
 
 /// Epsilon used by both `_rms_unit` and `_zcrms`, inside the square root.
 pub const EPS: f32 = 1e-6;
@@ -84,11 +83,9 @@ fn logsumexp(x: &[f32]) -> f32 {
     max + math::ln(sum)
 }
 
-/// SiLU / swish: `x * sigmoid(x)`.
-#[inline]
-pub fn silu(x: f32) -> f32 {
-    x * sigmoid(x)
-}
+/// SiLU / swish. Lives in [`crate::ops`] now that v3 uses it too; re-exported
+/// here so existing call sites are unchanged.
+pub use crate::ops::silu;
 
 /// `decode._hadamard` — the HadamardMLP body.
 ///

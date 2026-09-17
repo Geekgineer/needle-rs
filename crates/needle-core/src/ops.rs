@@ -109,3 +109,12 @@ pub fn add_bias(x: &mut [f32], bias: &[f32], batch: usize, out_dim: usize) {
         }
     }
 }
+
+/// SiLU / swish: `x * sigmoid(x)`.
+///
+/// Shared: v2 and v3 use it with identical semantics and it bakes in no
+/// geometry.
+#[inline]
+pub fn silu(x: f32) -> f32 {
+    x * sigmoid(x)
+}

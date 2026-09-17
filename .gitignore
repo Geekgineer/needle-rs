@@ -24,3 +24,5 @@ tests/v2_forward_vectors.json
 # v3 forward-pass ladder: regenerate with tools/gen_v3_forward_parity.py
 tests/v3_forward_vectors.json
 tests/v3_forward_vectors.f32
+tests/v3_component_vectors.json
+tests/v3_component_vectors.f32
