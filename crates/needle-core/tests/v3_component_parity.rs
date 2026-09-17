@@ -7,7 +7,24 @@
 
 use std::path::Path;
 
+use needle_core::ops::sigmoid;
+use needle_core::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
 use needle_core::v3::kernels::{hada_blocks, hadamard_mlp, HadaMlp, HadaPerms};
+
+/// `y = x · W` for a row-major `(in, out)` kernel, the orientation the
+/// rebuilt parameter tree stores.
+fn dense(x: &[f32], w: &[f32], n_in: usize, n_out: usize, y: &mut [f32]) {
+    y.fill(0.0);
+    for (i, &xi) in x.iter().enumerate().take(n_in) {
+        if xi == 0.0 {
+            continue;
+        }
+        let row = &w[i * n_out..(i + 1) * n_out];
+        for (yo, &wo) in y.iter_mut().zip(row) {
+            *yo += xi * wo;
+        }
+    }
+}
 
 const JSON: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -128,5 +145,105 @@ fn hadamard_mlp_matches_the_reference() {
          (abs {worst:.3e}) at position {} dim {}",
         worst_at.0,
         worst_at.1
+    );
+}
+
+#[test]
+fn attention_matches_the_reference() {
+    let Some(f) = Fixture::load() else { return };
+    let g = &f.meta["geometry"];
+    let u = |k: &str| g[k].as_u64().unwrap() as usize;
+
+    let (d_model, seq) = (u("d_model"), u("seq"));
+    let d = AttnDims {
+        seq,
+        num_heads: u("num_heads"),
+        num_kv_heads: u("num_kv_heads"),
+        qk_head_dim: u("qk_head_dim"),
+        v_head_dim: u("v_head_dim"),
+    };
+    let taps_n = u("qkv_conv_taps");
+    let window = u("sliding_window");
+
+    let x = f.get("attn_in");
+    let want = f.get("attn_out");
+    let (q_w, k_w, v_w) = (
+        f.get("attn_q_proj"),
+        f.get("attn_k_proj"),
+        f.get("attn_v_proj"),
+    );
+    let (gate_w, out_w) = (f.get("attn_gate_proj"), f.get("attn_out_proj"));
+    let (q_s, k_s) = (f.get("attn_q_norm"), f.get("attn_k_norm"));
+    let (cos, sin) = (f.get("attn_rope_cos"), f.get("attn_rope_sin"));
+
+    let q_dim = d.num_heads * d.qk_head_dim;
+    let k_dim = d.num_kv_heads * d.qk_head_dim;
+    let v_dim = d.num_kv_heads * d.v_head_dim;
+    let o_dim = d.num_heads * d.v_head_dim;
+
+    // Projections. In production these are packed CqWeight matvecs; the
+    // kernels under test are the same either way.
+    let mut q = vec![0.0f32; seq * q_dim];
+    let mut k = vec![0.0f32; seq * k_dim];
+    let mut v = vec![0.0f32; seq * v_dim];
+    for t in 0..seq {
+        let xt = &x[t * d_model..(t + 1) * d_model];
+        dense(xt, &q_w, d_model, q_dim, &mut q[t * q_dim..(t + 1) * q_dim]);
+        dense(xt, &k_w, d_model, k_dim, &mut k[t * k_dim..(t + 1) * k_dim]);
+        dense(xt, &v_w, d_model, v_dim, &mut v[t * v_dim..(t + 1) * v_dim]);
+    }
+
+    if taps_n > 0 {
+        causal_depthwise_conv(&mut q, &f.get("attn_q_taps"), seq, q_dim, taps_n);
+        causal_depthwise_conv(&mut k, &f.get("attn_k_taps"), seq, k_dim, taps_n);
+        causal_depthwise_conv(&mut v, &f.get("attn_v_taps"), seq, v_dim, taps_n);
+    }
+
+    norm_and_rope(&mut q, &q_s, &cos, &sin, seq, d.num_heads, d.qk_head_dim);
+    norm_and_rope(&mut k, &k_s, &cos, &sin, seq, d.num_kv_heads, d.qk_head_dim);
+
+    let mut attn = vec![0.0f32; seq * o_dim];
+    let span = if window == 0 { None } else { Some(window) };
+    attend(&q, &k, &v, d, span, &mut attn);
+
+    // out = (attn ⊙ sigmoid(x · gate_proj)) · out_proj
+    let mut got = vec![0.0f32; seq * d_model];
+    let mut gate = vec![0.0f32; o_dim];
+    for t in 0..seq {
+        let xt = &x[t * d_model..(t + 1) * d_model];
+        dense(xt, &gate_w, d_model, o_dim, &mut gate);
+        let a = &mut attn[t * o_dim..(t + 1) * o_dim];
+        for (ai, &gi) in a.iter_mut().zip(gate.iter()) {
+            *ai *= sigmoid(gi);
+        }
+        dense(
+            a,
+            &out_w,
+            o_dim,
+            d_model,
+            &mut got[t * d_model..(t + 1) * d_model],
+        );
+    }
+
+    let mut worst = 0.0f32;
+    let mut at = 0usize;
+    let mut sq = 0.0f64;
+    for (i, (&gv, &wv)) in got.iter().zip(&want).enumerate() {
+        sq += (wv as f64) * (wv as f64);
+        let dd = (gv - wv).abs();
+        if dd > worst {
+            worst = dd;
+            at = i;
+        }
+    }
+    let rms = (sq / want.len() as f64).sqrt() as f32;
+    let rel = worst / rms;
+    println!(
+        "attention: max abs deviation {worst:.3e} against output RMS {rms:.3} \
+         = {rel:.3e} relative (worst at flat index {at})"
+    );
+    assert!(
+        rel < 1e-4,
+        "attention deviates from the f32 reference by {rel:.3e} of RMS (abs {worst:.3e})"
     );
 }

@@ -19,7 +19,15 @@ import jax.numpy as jnp
 import numpy as np
 
 from cact_params_v3 import rebuild
-from needle.model.architecture import HadamardMLP, _hada_blocks, _hada_perms
+from needle.model.architecture import (
+    HadamardMLP,
+    MultiHeadAttention,
+    _hada_blocks,
+    _hada_perms,
+    head_dims,
+    make_causal_mask,
+    precompute_rope_freqs,
+)
 
 OUT_JSON = pathlib.Path("tests/v3_component_vectors.json")
 OUT_F32 = pathlib.Path("tests/v3_component_vectors.f32")
@@ -73,6 +81,72 @@ def main():
                  "w2a", "w2b", "w3a", "w3b", "cond_v", "cond_u"):
         rec["components"][f"mlp_{name}"] = blob.add(np.asarray(layer0[name], np.float32))
     print(f"  hadamard_mlp  in {x.shape} -> out {tuple(np.asarray(out).shape)}")
+
+
+    # --- MultiHeadAttention, layer 0 ------------------------------------
+    # Exercised with a sliding-window mask, since 16 of the 20 layers are
+    # local; the global layers differ only in which mask they are handed.
+    qk_hd, v_hd = head_dims(cfg)
+    sa = params["stack"]["layers"]["block"]["self_attn"]
+    a0 = {}
+    for k, v in sa.items():
+        if isinstance(v, dict):
+            a0[k] = {ik: jnp.asarray(iv[0]) for ik, iv in v.items()}
+        else:
+            a0[k] = jnp.asarray(v[0])
+
+    T = 8
+    ax = rng.standard_normal((1, T, cfg.d_model)).astype(np.float32) * 0.5
+    mask = make_causal_mask(T)
+    window = int(getattr(cfg, "sliding_window", 0))
+    if window:
+        pos = jnp.arange(T)
+        band = ((pos[:, None] - pos[None, :]) < window)[None, None]
+        local_mask = mask & band
+    else:
+        local_mask = mask
+    cos, sin = precompute_rope_freqs(qk_hd, T, cfg.rope_theta)
+
+    attn = MultiHeadAttention(
+        num_heads=cfg.num_heads,
+        num_kv_heads=cfg.num_kv_heads,
+        d_model=cfg.d_model,
+        num_layers=cfg.num_layers,
+        dtype=jnp.float32,
+        qk_head_dim=qk_hd,
+        v_head_dim=v_hd,
+        qkv_conv_taps=int(getattr(cfg, "qkv_conv_taps", 0)),
+    )
+    aout = attn.apply({"params": a0}, jnp.asarray(ax), mask=local_mask, rope=(cos, sin))
+
+    rec["geometry"].update(
+        {
+            "num_heads": cfg.num_heads,
+            "num_kv_heads": cfg.num_kv_heads,
+            "qk_head_dim": int(qk_hd),
+            "v_head_dim": int(v_hd),
+            "seq": T,
+            "sliding_window": window,
+            "qkv_conv_taps": int(getattr(cfg, "qkv_conv_taps", 0)),
+            "rope_theta": float(cfg.rope_theta),
+        }
+    )
+    rec["components"]["attn_in"] = blob.add(ax[0])
+    rec["components"]["attn_out"] = blob.add(np.asarray(aout, np.float32)[0])
+    rec["components"]["attn_rope_cos"] = blob.add(cos)
+    rec["components"]["attn_rope_sin"] = blob.add(sin)
+    for name in ("q_proj", "k_proj", "v_proj", "gate_proj", "out_proj"):
+        rec["components"][f"attn_{name}"] = blob.add(
+            np.asarray(a0[name]["kernel"], np.float32)
+        )
+    for name in ("q_norm", "k_norm"):
+        rec["components"][f"attn_{name}"] = blob.add(
+            np.asarray(a0[name]["scale"], np.float32)
+        )
+    for name in ("q_taps", "k_taps", "v_taps"):
+        if name in a0:
+            rec["components"][f"attn_{name}"] = blob.add(np.asarray(a0[name], np.float32))
+    print(f"  attention     in {ax.shape} -> out {tuple(np.asarray(aout).shape)}")
 
     # Sanity: the learned factors are initialised to Walsh but trained, so
     # record how far they have drifted. If they were still exactly Walsh a
