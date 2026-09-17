@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>needle-rs — local tool calling in your browser, no server</title>
-  <meta name="description" content="Needle v1 and v2 tool-calling transformers running entirely client-side in WebAssembly, side by side. Tool calls, reasoning traces, confidence scoring and tool retrieval. No server, no API key, no data leaving your device." />
+  <meta name="description" content="Needle 3, 2 and 1 tool-calling transformers running entirely client-side in WebAssembly, side by side. Tool calls, reasoning traces, confidence scoring and tool retrieval. No server, no API key, no data leaving your device." />
 
   <!-- Open Graph / Twitter -->
   <meta property="og:title" content="needle-rs — local tool calling in your browser" />
-  <meta property="og:description" content="Needle v1 and v2 running side by side in WebAssembly: tool calls, reasoning, confidence scoring and tool retrieval. No server, no API key." />
+  <meta property="og:description" content="Needle 3, 2 and 1 running side by side in WebAssembly: tool calls, reasoning, confidence scoring and tool retrieval. No server, no API key." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://needle-rs.pages.dev" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -324,6 +324,8 @@
     // Both Needle versions ship in one wasm module, so the page can
     // load either and the UI adapts to what that version can do.
     //
+    //   v3  NeedleV3Wasm  — one .cact file, 121M params. Reasons before
+    //                       answering, confidence head, no retrieval head.
     //   v2  NeedleV2Wasm  — one .cact file (weights + geometry + tokenizer),
     //                       reasoning traces, confidence, sampling, an
     //                       optional grammar constraint.
@@ -331,15 +333,51 @@
     //                       greedy only, no confidence head.
     // ============================================================
 
+    const HF_V3 = "https://huggingface.co/Cactus-Compute/needle3/resolve/main";
     const HF_V2 = "https://huggingface.co/Cactus-Compute/needle2/resolve/main";
     const HF_V1 = "https://huggingface.co/Abdalrahman/needle-rs-safetensors/resolve/main";
 
     const MODELS = {
+      v3: {
+        id: "v3",
+        name: "Needle 3",
+        badge: "Needle&nbsp;3",
+        tag: "newest",
+        bytes: 35_335_380,
+        blurb: "The newest generation — reasons before it answers.",
+        specs: "121M params · 8192 context · 2-bit weights",
+        note:
+          "One <span class='mono text-gray-500'>.cact</span> file streamed from " +
+          "<a href='https://huggingface.co/Cactus-Compute/needle3' class='underline hover:text-gray-400' target='_blank' rel='noopener'>HuggingFace</a>" +
+          ". At 35 MB it is the largest of the three — worth it when quality matters, " +
+          "but Needle 2 is a quarter the download. Weights are Apache-2.0; the runtime stays MIT.",
+        caps: { constrain: true, maxTokens: true, confidence: true, retrieval: false, think: true, stream: true },
+        capsNote: "Needle 3 exports no retrieval head, so tool ranking is unavailable — use Needle 2 for that.",
+        headsNote:
+          "Needle 3 ships a confidence head but no contrastive head. Confidence scores a finished " +
+          "answer, not a question: pass it the completion. A bare query scores around 0.80 here, " +
+          "which looks confident and means nothing.",
+        code: `import init, { NeedleV3Wasm } from "needle-rs";
+
+await init();
+const engine = NeedleV3Wasm.load(new Uint8Array(cactBytes));
+
+engine.run_json(query, toolsJson);        // the tool-call payload
+engine.reasoning(engine.run(query, tools)); // the <think> block
+engine.generate(query, tools, 0, 0, 0, true); // constrained
+engine.confidence_for(query, tools, out); // confidence in that answer
+engine.kv_bytes(512);                     // what a session will cost`,
+        async load(init, mod, onProgress) {
+          const cact = await onProgress(`${HF_V3}/needle3.cact`, "model", this.bytes);
+          const e = mod.NeedleV3Wasm.load(cact);
+          return { engine: e, downloaded: cact.length };
+        },
+      },
       v2: {
         id: "v2",
         name: "Needle v2",
         badge: "Needle&nbsp;v2",
-        tag: "recommended",
+        tag: "smallest",
         bytes: 13_737_807,
         blurb: "One <span class='mono'>.cact</span> file — weights, geometry and tokenizer together.",
         specs: "45M params · decoder-only · 2-bit weights",
@@ -410,6 +448,9 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
     ];
 
     const $ = (id) => document.getElementById(id);
+    // Needle 2 is the default even though Needle 3 is listed first: a first
+    // visit otherwise pays a 35 MB download before seeing anything work.
+    // Needle 3 is one click away and labelled "newest".
     let selected = "v2";
     let engine = null;
     let active = null;  // the MODELS entry currently loaded
