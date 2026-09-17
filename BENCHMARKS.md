@@ -304,12 +304,12 @@ of the same tree comes out smaller, so treat these as the upper bound.
 |---|---|---|
 | CLI binary (`needle-rs`) | **668 KB** | stripped release, both engines |
 | C shared library (`libneedle_c.dylib`) | **702 KB** | cdylib, stable C ABI, both surfaces |
-| WASM module (`needle_wasm_bg.wasm`) | **413 KB** | after `wasm-opt -Oz`; **156 KB** over the wire as Cloudflare Pages serves it (brotli), 162 KB gzipped, 131 KB at `brotli -q 11` |
+| WASM module (`needle_wasm_bg.wasm`) | **529 KB** | after `wasm-opt -Oz`; **156 KB** over the wire as Cloudflare Pages serves it (brotli), 202 KB gzipped, 160 KB at `brotli -q 11` |
 | — same module, unoptimised | 462 KB | what `wasm-pack build` alone emits |
 
 `wasm-opt` is **not** run by `wasm-pack` here — the crate sets
 `wasm-opt = false`, because the binary wasm-pack downloads fails in this build
-environment. Run it yourself for the 413 KB figure:
+environment. Run it yourself for the 529 KB figure:
 
 ```bash
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
@@ -323,7 +323,7 @@ Weights, per version:
 | v2 | `needle2.cact` (weights + geometry + tokenizer) | **13.7 MB** |
 | v1 | `needle.safetensors` + `vocab.txt` | **22 MB** + 122 KB |
 
-Smallest complete browser deployment is v2: 413 KB of runtime plus a 13.7 MB
+Smallest complete browser deployment is v2: 529 KB of runtime plus a 13.7 MB
 container, 156 KB + 13.7 MB over the wire with brotli. A generation session needs
 roughly 23 MB of working memory on top (see [Memory](#memory)).
 
@@ -340,7 +340,7 @@ roughly 23 MB of working memory on top (see [Memory](#memory)).
 On disk: the CPU-only virtualenv used to generate the parity fixtures here
 (`jax`, `flax`, `numpy` and their transitive deps, Python 3.12) measures
 **479 MB**, of which `jaxlib` alone is 268 MB. A CUDA build is several times
-that. The equivalent needle-rs deployment is a 668 KB binary, or 413 KB of
+that. The equivalent needle-rs deployment is a 668 KB binary, or 529 KB of
 WebAssembly.
 
 ---

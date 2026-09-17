@@ -5,6 +5,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-18
+
+Adds support for **Needle 3** (`Cactus-Compute/needle3`). v3 lands alongside v1
+and v2 rather than replacing them; all three run from one binary, one WASM
+module and one Python package.
+
+Upstream changed a great deal between v2 and v3 — asymmetric query/value head
+widths, a causal convolution over Q/K/V, hybrid local/global attention, five
+Engram sites, and a "HadamardMLP" that no longer contains a Hadamard transform.
+None of the weights, the container header or the forward pass are shared with
+v2, so v3 is a parallel path.
+
+The engineering record, including what was measured and what was rejected, is
+in [docs/v3-port-record.md](docs/v3-port-record.md).
+
+### Added
+
+- **Needle 3 container** — `needle-infer::cact::{CactV3, CactV3Geometry}`. The
+  header is 49 u32-sized fields against v2's 30; the tag differs by one, so a
+  container states its own generation and dispatch never guesses from the file
+  name. Verified field for field against `export.read_export`, including all
+  581 directory records.
+- **Forward pass** — `needle-core::v3`. Token-exact against the reference:
+  9.0e-6 relative on the logits with zero argmax mismatches over 57 positions.
+- **KV cache** — incremental decode is *bit-identical* to prefill, not merely
+  close. Sized to the session rather than to the windows: 1.2 MB for a
+  57-token run where reserving every window would cost 14.4 MB.
+- **Batched prefill and threading** — 2.16x, bit-identical.
+- **Confidence head** — matches the reference to 2e-6.
+- **Constrained decoding** over the v3 token table, engaged only inside
+  `<tool_call>`.
+- **Bindings** — `V3Engine` (Rust, Python), `NeedleV3Wasm` (WASM),
+  `needle_v3_*` (C ABI, 12 entry points).
+- **`kv_bytes(seq_len)`** on the WASM, C and Python surfaces, because on those
+  the caller usually owns the memory budget.
+
+### Changed
+
+- The CLI dispatches on the container tag rather than the `.cact` extension,
+  since both v2 and v3 use it.
+- The chat prompt moved to `needle-infer::prompt`, shared by v2 and v3 —
+  upstream assembles it identically, and one copy of the JSON compaction
+  matters because pretty-printed schemas change the model's answer.
+- `silu`, `rms_unit`, `rms_unit_to` and `sinkhorn` moved to a shared layer.
+  v2 keeps its import paths through re-exports.
+- The WASM module is **529 KB** with three engines (160 KB over the wire),
+  against 413 KB with two. That is the cost of carrying v1, v2 and v3 in one
+  module.
+
+### Notes
+
+- **Needle 3 is Apache-2.0** where v1 and v2 were MIT. needle-rs itself remains
+  MIT; the licence applies to the weights.
+- **v3 exports no contrastive head**, so `retrieve_tools` and
+  `encode_contrastive` have no v3 equivalent. The methods are absent rather
+  than present-and-always-empty.
+- **v3 reasons before answering.** It emits a `<think>` block where v2 answered
+  directly, so the default token budget is 256 rather than 128 and the
+  bindings expose `reasoning()`.
+- **The confidence head is easier to misuse on v3 than on v2.** It scores a
+  completion, not a query. On v2 a bare query scored near zero, so the mistake
+  announced itself; on v3 it scores 0.80 against 0.93 for a correct completion
+  — a plausible number that means nothing.
+
+
 ## [0.2.1] - 2026-08-20
 
 Documentation only. No runtime, API or weight-format change; `0.2.0` and `0.2.1`

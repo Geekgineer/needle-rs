@@ -10,20 +10,70 @@
 
 # needle-rs
 
-A working tool-calling LLM in **413 KB of WebAssembly** — 156 KB over the wire. Runs in
+A working tool-calling LLM in **529 KB of WebAssembly** — 160 KB over the wire. Runs in
 the browser, Node.js, Deno, Bun and Cloudflare Workers. No server, no API key, no
 data leaving the device.
 
 This is the WebAssembly build of [needle-rs](https://github.com/Geekgineer/needle-rs),
 a pure-Rust runtime for [Cactus Compute's](https://github.com/cactus-compute/needle)
-Needle models. Both generations are supported from the same module, and output is
+Needle models. All three generations are supported from the same module, and output is
 verified token-exact against the upstream JAX reference.
 
 ```bash
 npm install needle-rs
 ```
 
+## Quick start — Needle 3
+
+The newest and strongest generation. One file carries the weights, the geometry
+and the tokenizer.
+
+```js
+import init, { NeedleV3Wasm } from "needle-rs";
+
+await init();
+
+const res = await fetch("https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact");
+const engine = NeedleV3Wasm.load(new Uint8Array(await res.arrayBuffer()));
+
+const tools = JSON.stringify([{
+  name: "get_weather",
+  description: "Get current weather for a city",
+  parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+}]);
+
+const query = "What's the weather in Paris?";
+const out = engine.run(query, tools);
+// <think>Query asks for weather in Paris. get_weather tool with city 'Paris'.</think>
+// <tool_call>[{"name":"get_weather","arguments":{"city":"Paris"}}]</tool_call>
+
+const payload = engine.run_json(query, tools);
+// [{"name":"get_weather","arguments":{"city":"Paris"}}]
+
+// Needle 3 reasons before answering; v2 did not.
+const why = engine.reasoning(out);
+
+// Gate on the model's confidence in the answer it just gave.
+const p = engine.confidence_for(query, tools, out);
+if (p >= 0.8) console.log(JSON.parse(payload));
+```
+
+**Budget the session before you start it.** The container is 35.3 MB and the
+cache grows with the conversation, so `kv_bytes(seq_len)` reports what a run
+will actually cost — 8.8 MB at 512 positions, 28 MB at 4096. `max_seq_len()` is
+the ceiling.
+
+`confidence_for` takes the **completion**, not the query. The head scores a
+finished judgement: a correct call scores 0.93 and a wrong one 0.26, but a bare
+query scores 0.80 — a plausible number that means nothing. Needle 2 collapsed to
+near zero on that mistake, so it announced itself; Needle 3's does not.
+
+Needle 3 exports no retrieval head, so `contrastive_dim`, `encode_contrastive`
+and `retrieve_tools` are absent on `NeedleV3Wasm` rather than present and always
+empty. Use `NeedleV2Wasm` if you need them.
+
 ## Quick start — Needle v2
+
 
 One file carries the weights, the geometry and the tokenizer.
 
@@ -117,13 +167,22 @@ back — feeding it a bare query reads near zero however good the answer is.
 
 Weights are **not** bundled; fetch them once and let the browser cache them.
 
-| Version | File | Size | Source |
-|---|---|---|---|
-| v2 | `needle2.cact` | 13.7 MB | [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2) |
-| v1 | `needle.safetensors` + `vocab.txt` | 22.3 MB + 122 KB | [`Abdalrahman/needle-rs-safetensors`](https://huggingface.co/Abdalrahman/needle-rs-safetensors) |
+| Version | Class | File | Size | Source |
+|---|---|---|---|---|
+| 3 | `NeedleV3Wasm` | `needle3.cact` | 35.3 MB | [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3) |
+| 2 | `NeedleV2Wasm` | `needle2.cact` | 13.7 MB | [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2) |
+| 1 | `NeedleWasm` | `needle.safetensors` + `vocab.txt` | 22.3 MB + 122 KB | [`Abdalrahman/needle-rs-safetensors`](https://huggingface.co/Abdalrahman/needle-rs-safetensors) |
 
-A generation session needs roughly 23 MB of WASM linear memory. Linear memory
-never shrinks, so keep one engine per tab or isolate and reuse the handle.
+Loading the wrong class fails rather than misreading the container: Needle 2 and
+3 are both `.cact`, and their headers are different sizes.
+
+A Needle 2 session needs roughly 23 MB of WASM linear memory. Needle 3 is larger
+— the container alone is 35.3 MB, plus 8.8 MB of cache at 512 positions — so
+call `kv_bytes()` before committing a tab to one. Linear memory never shrinks,
+so keep one engine per tab, or isolate and reuse the handle.
+
+Needle 3's weights are Apache-2.0; v1 and v2 are MIT. This package is MIT either
+way — the difference applies to the model you load.
 
 ## Notes
 

@@ -20,7 +20,7 @@ name = "needle_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-needle-infer = { path = "../needle-infer", version = "0.2.1", features = ["parallel"] }
+needle-infer = { path = "../needle-infer", version = "0.3.0", features = ["parallel"] }
 # abi3-py38 builds against the stable ABI, so one wheel serves every CPython
 # >= 3.8 (matching pyproject's requires-python) and the build no longer caps at
 # whatever the pinned pyo3 knew about. pyo3 0.21 refused to build against the

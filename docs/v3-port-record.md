@@ -48,78 +48,91 @@ kv_window 256  kv_bits 8   codebook_len 28
 121,021,910 parameters
 ```
 
-## What is done
+## What landed in 0.3.0
+
+All verified against `needle3.cact` unless noted. 322 tests across the
+workspace; `clippy --all-targets -D warnings` clean.
 
 - **Container** — `needle-infer::cact::{CactV3, CactV3Geometry}`. The header is
   49 u32-sized fields; the tag is one greater than v2's, so a container states
-  its own generation in the first word and dispatch never guesses from length.
-  A v2 loader rejects a v3 tag outright rather than reading 196 bytes as 120 and
-  producing plausible wrong geometry.
-- **Shared body parsing** — `parse_directory` and `parse_codebook` are now free
-  functions both generations call. The record layout and codebook are identical;
-  only the header ahead of them changed.
-- **Container parity** — checked field for field against `export.read_export`:
-  geometry, all 581 directory records including offsets and byte counts, and the
-  container's own size. `tools/gen_cact_v3_parity.py` generates the fixture.
-- **Tokenizer** — the container's embedded blob decodes with the existing
-  `sp_tokenizer` unchanged, and matches real `sentencepiece` exactly on 14 cases.
-- **Canon pinned** — `tools/cact_params_v3.py` inverts `export._tensors` to
-  rebuild the Flax tree from the container, and `tools/check_v3_canon.py` runs
-  upstream's own `SimpleAttentionNetwork` on it. Both shipped prompts produce
-  correct tool calls, which is the evidence per-tensor parity cannot give.
-- **Canon in Rust** — `needle-infer::v3::V3Layout` walks the same order and
-  validates every slot whose shape the geometry determines. A container
-  claiming one layer fewer is rejected rather than silently misread.
-- **Core geometry** — `needle-core::v3::V3Config`, including the KV design:
-  `attention_span()` distinguishes the 16 sliding layers from the 4 global
-  ones, and `kv_bytes()` sizes a session to the sequence it actually uses.
-  2.2 MB at int8 for 512 tokens against 10.5 MB if the global layers were
-  preallocated at `max_seq_len`.
-- **Forward ladder captured** — `tools/gen_v3_forward_parity.py` records input
-  embeddings, RoPE tables, engram keys/values at all five sites, and logits, so
-  a Rust mismatch localises to a component. One reference forward is 1.2 s.
+  its own generation in its first word and dispatch never guesses from a file
+  name. Checked field for field against `export.read_export`, including all 581
+  directory records and their offsets.
+- **Canon** — `tools/cact_params_v3.py` inverts `export._tensors` and
+  `tools/check_v3_canon.py` runs upstream's own model on the result, which
+  produces correct tool calls. That is the check per-tensor parity cannot do:
+  the directory is nameless, so a correct tensor in the wrong slot passes every
+  individual comparison. `V3Layout` walks the same order in Rust and rejects a
+  container whose shapes disagree with its header.
+- **Tokenizer** — the embedded blob decodes with the existing `sp_tokenizer`
+  unchanged and matches `sentencepiece` exactly on 14 cases.
+- **Forward pass** — `needle-core::v3`. Token-exact: 9.0e-6 relative on the
+  logits with zero argmax mismatches over 57 positions. Components verified
+  separately — HadamardMLP 5.4e-6, attention 2.7e-6, Engram keys/values 1.2e-6
+  with the hash indices matching *exactly* as integers.
+- **KV cache** — incremental decode is bit-identical to prefill (0.000e0), and
+  sized to the session: 1.2 MB for a 57-token run against 14.4 MB if every
+  window were reserved.
+- **Batched prefill and threading** — 507ms to 235ms over 57 positions, 2.16x,
+  bit-identical because `matmul_rows_prepared` matches repeated matvecs exactly.
+- **Confidence head** — 2e-6 against the reference. Cells checked first.
+- **Constrained decoding** — the JSON state machine over the v3 token table,
+  engaged only between the `<tool_call>` markers.
+- **Bindings** — Rust, C ABI (12 entry points, header compiled against the
+  built library), WASM (`NeedleV3Wasm`), Python (`V3Engine`). Each refuses a v2
+  container rather than misreading its header.
+- **CLI** — dispatches on the container tag; all three generations from one
+  binary.
 
 ## Findings worth keeping
 
 - **v3's tokenizer is not v2's.** The two `tokenizer.model` files differ
-  (126,520 against 132,396 bytes). Reusing the v2 vocabulary for v3 would
-  tokenize plausibly and decode to nonsense, so the vocabularies must never be
-  shared between generations.
-- **v3 introduces FP32 records**, which v2's container never carried: two
-  vectors of length 1024 (= `hada_n`) at slots 550–551. The dtype mix is
-  asserted so a silent change to the quantisation scheme fails at load.
-- **The special-token block grew.** Beyond v2's chat and tool markers, v3 adds
-  `<think>`, `<extract>`, `<schema>` and modality tokens (`<image>`, `<speech>`,
-  `<tts>`, `<imagen>`). They must resolve to single ids or prompt construction
-  would emit them as literal text.
+  (126,520 against 132,396 bytes). Sharing a vocabulary between generations
+  would tokenize plausibly and decode to nonsense.
+- **"HadamardMLP" contains no Hadamard transform in v3.** The three stages are
+  Kronecker products of learned 32x32 factors — measured drift from their Walsh
+  initialisation is 1.45 to 3.98 against entries of +/-1. v2's FWHT shortcut
+  does not carry over. The Kronecker structure is still the win: 65,536 MACs
+  per stage against ~1.05M dense, in L1-resident blocks.
+- **Parity must be measured against a float32 reference.** The reference config
+  ships bfloat16. Measured against it, a *correct* MLP kernel reads as 9.7
+  relative error and a correct forward pass as 8.3e-2 with an argmax mismatch.
+  Component fixtures are generated in f32 and deviation is measured against
+  output RMS; behavioural parity is the separate token-exact gate. Conflating
+  the two sends you hunting a bug that is not there — twice, here.
+- **v3 introduces FP32 records**, which v2's container never carried: the two
+  Hadamard permutations, stored rather than derived because upstream generates
+  them from a seeded RNG a runtime cannot reproduce.
 - **`gate_proj` is not v2's per-head gate.** It is `Dense(num_heads *
-  v_head_dim)` — an elementwise sigmoid over the attention output, 768x768 on
-  this model rather than 12x768.
-- **v3 emits `<think>` chain-of-thought** before tool calls, which v2 did not,
-  and generation must stop on `<|im_end|>` rather than EOS alone. Both affect
-  the default token budget and the tool-call extractor.
-- **Upstream now ships a WebAssembly component** — `wasm-component/needle.component.wasm`
+  v_head_dim)`, an elementwise sigmoid over the attention output.
+- **The confidence head is easier to misuse on v3.** It scores a completion,
+  not a query. On v2 a bare query scored near zero, so the mistake announced
+  itself; on v3 it scores 0.80 against 0.93 for a correct completion and 0.26
+  for a wrong one.
+- **The engram table count is `orders x heads`** — 2 x 3 = 6, where upstream
+  derives `heads = d_model / (len(orders) * 128)`. `engram_geometry`'s 3 is the
+  head count, not the table count.
+- **Upstream now ships a WebAssembly component** — `needle.component.wasm`
   (4.2 MB) with a real `needle.wit` declaring `cactus:needle@3.0.0`. Their
   native C API remains a four-function global singleton with no handles.
 
-## Still to do
+## Still open
 
-Milestones 3–8 of the design: the forward pass, engine and CLI, batched prefill
-and threading, the confidence head, constrained decoding, the four bindings, and
-the release work.
-
-**The forward-pass plan is deliberately not written yet.** It is blocked on one
-decision: v3's global-attention layers (4, 9, 14, 19) attend across the whole
-sequence, so they cannot use the fixed 256-slot KV ring that v2 relies on. That
-allocation strategy has to be settled before the plan can be written without
-placeholders, and it is the single highest-impact unknown in the port.
-
-One other open item, recorded so it is not rediscovered:
-
-- **Apache-2.0.** v3 is Apache-2.0 where v1 and v2 were MIT. The runtime stays
-  MIT, but `CITATION.cff`, the Hugging Face model card and any blanket "MIT
-  throughout" claim need per-generation wording, and Apache-2.0 carries
-  attribution obligations MIT does not.
+- **The KV cache stores f32 while the container declares `kv_bits = 8`.**
+  Upstream post-trained this model for an int8 cache, so that is a real 4x on
+  the dominant memory cost — 8.8 MB to 2.2 MB at 512 positions. Not done here
+  because quantising moves numerics off the path verified bit-identical, and it
+  needs its own parity story against the reference's `quant=True` path.
+- **Decode is ~8.3 ms/token and threading does not help it.** Single-position
+  matvecs are too small to pay the rayon dispatch, the same finding v2 reached.
+  Batching is a prefill technique. Further gains would come from the CQ group
+  decode, which is the remaining bottleneck, not from the FMA.
+- **Ladder (elastic depth) and width slicing are out of scope**, with evidence:
+  `ladder_slice` and `width_slice` appear only in `architecture.py`, are never
+  called by `export.py`, `run.py` or `checkpoints.py`, and the container header
+  carries no depth or width field. The shipped `.cact` bakes one configuration.
+- **No contrastive head in v3**, so `retrieve_tools` and `encode_contrastive`
+  have no v3 equivalent on any surface.
 
 ## Regenerating the fixtures
 
@@ -142,6 +155,12 @@ uv pip install --python .venv-parity/bin/python "jax[cpu]" flax numpy sentencepi
 |---|---|---|
 | `tests/cact_v3_vectors.json` (92 KB) | yes | `tools/gen_cact_v3_parity.py` |
 | `tests/tokenizer_v3_vectors.json` (5 KB) | yes | `tools/gen_tokenizer_v3_parity.py` |
+| `tests/v3_component_vectors.json` + `.f32` (12 MB) | **no** | `tools/gen_v3_component_parity.py` |
+| `tests/v3_forward_vectors.json` + `.f32` (7 MB) | **no** | `tools/gen_v3_forward_parity.py` |
+
+The two large ladders are gitignored on size, as the v2 one is. The canon check
+itself is `tools/check_v3_canon.py`, which needs no fixture — it runs upstream's
+model on the rebuilt tree and prints what it produces.
 
 Every parity test skips with a printed notice when its inputs are absent, so a
 fresh clone runs `cargo test` clean, and CI runs both suites against a freshly

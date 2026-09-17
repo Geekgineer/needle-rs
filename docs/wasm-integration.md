@@ -17,14 +17,14 @@ Output: `pkg/needle_wasm_bg.wasm` (462 KB) + `pkg/needle_wasm.js` (28 KB of glue
 
 `wasm-pack` does **not** run `wasm-opt` here — the crate sets
 `wasm-opt = false`, because the binary wasm-pack downloads fails in this build
-environment. Run it yourself to get the published 413 KB module:
+environment. Run it yourself to get the published 529 KB module:
 
 ```bash
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
   pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm
 ```
 
-That is 162 KB gzipped and 156 KB as Cloudflare Pages serves it (brotli);
+That is 202 KB gzipped and 156 KB as Cloudflare Pages serves it (brotli);
 `brotli -q 11` gets it to 131 KB. Serve it compressed — it is the single
 biggest win available, larger than anything `-Oz` does.
 

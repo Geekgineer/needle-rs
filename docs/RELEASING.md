@@ -144,7 +144,7 @@ this workflow is ever restructured:
 - `wasm-opt` is not run by wasm-pack (the crate sets `wasm-opt = false`, since
   the binary wasm-pack downloads fails in some environments). Both release
   workflows run it as an explicit step. A local `wasm-pack build` therefore
-  produces a 462 KB module where CI produces 413 KB.
+  produces a 462 KB module where CI produces 529 KB.
 - Python wheels are `abi3` (pyo3 `abi3-py38`), so each platform gets exactly one
   wheel that serves every CPython >= 3.8. 0.2.0 published 5 wheels, not 25, and
   they were verified to install and import on 3.13 and 3.14. `CIBW_BUILD` lists

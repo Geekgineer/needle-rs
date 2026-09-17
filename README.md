@@ -39,7 +39,7 @@
 
 A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute/needle) by [Cactus Compute](https://github.com/cactus-compute) — small transformers that map `(query, tool list)` to a JSON function call. Deploys to browsers, edge workers, CLIs, Python, and `no_std` embedded targets. No server, no API key, no data leaving the device.
 
-**Both model generations are supported in parallel:** Needle **v2** (45M, decoder-only, one 13.7 MB `.cact` file) and Needle **v1** (26M, encoder–decoder, SafeTensors + vocabulary). Same runtime, same API shape, one binary.
+**All three model generations are supported in parallel:** Needle **3** (121M, one 35.3 MB `.cact` file), Needle **2** (45M, 13.7 MB `.cact`) and Needle **1** (26M, SafeTensors + vocabulary). Same runtime, same API shape, one binary — the generation comes from the container, not the file name.
 
 <br/>
 
@@ -58,11 +58,47 @@ Tool calling usually means a paid API round-trip or hundreds of megabytes on dis
 <tr><td>Hosted function calling</td><td align="right">SDK + API</td><td align="right">$ per token</td><td align="center">leaves device</td><td align="center">✗</td></tr>
 <tr><td>llama.cpp + a 1B local model</td><td align="right">700 MB+</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 <tr><td>ONNX Runtime Web + a model</td><td align="right">8 MB + model</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
-<tr><td><b><code>needle-rs</code> + Needle v2</b></td><td align="right"><b>413 KB + 13.7 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
+<tr><td><b><code>needle-rs</code> + Needle 3</b></td><td align="right"><b>529 KB + 35.3 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
+<tr><td><code>needle-rs</code> + Needle 2 <sub>(smallest)</sub></td><td align="right">529 KB + 13.7 MB</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 </tbody>
 </table>
 
-The runtime is 413 KB of WebAssembly (156 KB over the wire, brotli) with **one** runtime dependency. A generation session needs about 23 MB of working memory.
+The runtime is 529 KB of WebAssembly (160 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; Needle 3 is larger and heavier — see [choosing a generation](#generations).
+
+<br/>
+
+<!-- ────────────────────────────────────────────────── -->
+<h2 id="generations">Choosing a generation</h2>
+
+All three run from the same binary, the same WASM module and the same Python
+package. The runtime picks the right engine from the container itself, so
+nothing depends on a file name.
+
+| | Needle 3 | Needle 2 | Needle 1 |
+|---|---|---|---|
+| Parameters | 121M | 45M | 26M |
+| Container | `needle3.cact`, **35.3 MB** | `needle2.cact`, 13.7 MB | `.safetensors` + vocab, 22.3 MB |
+| Context | 8192 | 2048 | 1024 |
+| KV cache, 512-token session | 8.8 MB | 3.5 MB | — |
+| Reasoning | emits `<think>` first | answers directly | answers directly |
+| Confidence head | ✓ | ✓ | ✗ |
+| Tool retrieval | ✗ | ✓ | ✗ (not in the published weights) |
+| Licence | Apache-2.0 | MIT | MIT |
+
+**Pick Needle 3** when quality matters most and you can afford a 35 MB download
+and roughly 9 MB of cache. It reasons before answering, which shows up on
+ambiguous queries and larger tool catalogues.
+
+**Pick Needle 2** for the smallest viable browser deployment, or when you need
+tool retrieval — v3 exports no contrastive head, so `retrieve_tools` and
+`encode_contrastive` are absent on the v3 API rather than present and always
+empty.
+
+**Needle 1** remains supported for compatibility. It abstains readily as a tool
+catalogue grows; prefer a newer generation for new work.
+
+> Needle 3's weights are **Apache-2.0**, where v1 and v2 are MIT. needle-rs
+> itself is MIT in every case; the difference applies to the model.
 
 <br/>
 
@@ -192,10 +228,10 @@ Every example in [`examples/`](examples/) runs on both.
 <table>
 <thead><tr><th align="left">Target</th><th align="center">Status</th><th align="right">Binary</th></tr></thead>
 <tbody>
-<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>413 KB</code> <sub>156 KB over the wire</sub></td></tr>
+<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>529 KB</code> <sub>160 KB over the wire</sub></td></tr>
 <tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>601 KB</code></td></tr>
 <tr><td>Python <sub>(abi3 wheel, CPython ≥ 3.8)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
-<tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v2_*</code> + <code>needle_*</code></td></tr>
+<tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v3_*</code> + <code>needle_v2_*</code> + <code>needle_*</code></td></tr>
 <tr><td><code>no_std</code> embedded <sub>(Rust)</sub></td><td align="center">✓</td><td align="right"><sub>size varies</sub></td></tr>
 <tr><td>iOS / Android, Apple &amp; Snapdragon NPU</td><td align="center"><sub>use <a href="https://github.com/cactus-compute/cactus">Cactus</a></sub></td><td align="right"><sub>—</sub></td></tr>
 </tbody>
@@ -291,7 +327,7 @@ Full methodology — including the optimisations that were measured and **reject
 
 - **In-browser agents.** Route a user's sentence to one of your app's functions with no backend. See [`examples/browser-demo`](examples/browser-demo) and the [live demo](https://needle-rs.pages.dev).
 - **Dynamic tool sets.** Generate tools from live state each turn and let the model pick — [`examples/dom-editor`](examples/dom-editor) rewrites a page from plain English.
-- **Edge workers.** 413 KB of WASM fits inside a Cloudflare Worker.
+- **Edge workers.** 529 KB of WASM fits inside a Cloudflare Worker.
 - **Large tool catalogues.** Narrow hundreds of tools with the retrieval head before the call.
 - **Uncertainty-aware routing.** Use the confidence head to escalate to a larger model only when needed.
 - **Offline and embedded.** `no_std` kernels, one dependency, no allocator assumptions beyond `alloc`.

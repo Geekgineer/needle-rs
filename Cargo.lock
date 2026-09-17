@@ -277,7 +277,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "needle-c"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "needle-core",
  "needle-infer",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "needle-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "libm",
@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "needle-infer"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "needle-core",
  "serde_json",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "needle-python"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "needle-infer",
  "pyo3",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "needle-rs-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "needle-core",
  "needle-infer",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "needle-wasm"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "js-sys",
  "needle-core",

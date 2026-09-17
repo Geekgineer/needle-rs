@@ -191,3 +191,31 @@ jobs:
         run: |
           cargo test -p needle-infer --release --test cact_v3_parity -- --nocapture
           cargo test -p needle-infer --release --test tokenizer_v3_parity -- --nocapture
+          # The forward/decode ladder is gitignored for size, so its test skips
+          # cleanly here; these run against the container alone.
+          cargo test -p needle-infer --release --test v3_e2e -- --nocapture
+          cargo test -p needle-c      --release --test v3_ffi_smoke -- --nocapture
+          # Same suites threaded: row splitting must stay bit-identical.
+          cargo test -p needle-infer --release --features parallel --test v3_e2e -- --nocapture
+
+      # The browser demo calls exactly these bindings, so a break shows up here
+      # rather than in a deployed page.
+      - name: Verify the v3 WASM bindings
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-pack --version 0.13.1 --locked
+          wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg-nodejs/
+          node crates/needle-wasm/tests/node_e2e_v3.js
+
+      - name: Compile the C header against the built library
+        run: |
+          cargo build -p needle-c --release
+          cc -I crates/needle-c/include examples/c/v3_smoke.c \
+             -L target/release -lneedle_c -o /tmp/v3_smoke
+          LD_LIBRARY_PATH=target/release /tmp/v3_smoke
+
+      - name: Smoke-test the CLI against the v3 checkpoint
+        run: |
+          cargo run --release -p needle-rs-cli -- --json --constrain \
+            weights/needle3.cact "What's the weather in Paris?" \
+            '[{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]'

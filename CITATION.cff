@@ -6,8 +6,8 @@ title: "needle-rs: Pure-Rust + WASM runtime for the Needle tool-calling models"
 authors:
   - family-names: Ibrahim
     given-names: Abdalrahman
-version: 0.2.1
-date-released: 2026-08-20
+version: 0.3.0
+date-released: 2026-09-18
 url: https://github.com/geekgineer/needle-rs
 license: MIT
 repository-code: https://github.com/geekgineer/needle-rs

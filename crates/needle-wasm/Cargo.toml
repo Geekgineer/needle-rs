@@ -21,8 +21,8 @@ wasm-opt = false  # wasm-opt binary from wasm-pack is incompatible with this bui
 crate-type = ["cdylib"]
 
 [dependencies]
-needle-infer = { path = "../needle-infer", version = "0.2.1" }
-needle-core = { path = "../needle-core", version = "0.2.1" }
+needle-infer = { path = "../needle-infer", version = "0.3.0" }
+needle-core = { path = "../needle-core", version = "0.3.0" }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
