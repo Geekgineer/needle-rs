@@ -1,5 +1,6 @@
 use needle_infer::engine::NeedleEngine;
 use needle_infer::v2_engine::{GenerateOptions, V2Engine};
+use needle_infer::v3_engine::{extract_tool_call, V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS};
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 
@@ -247,9 +248,168 @@ impl PyV2Engine {
     }
 }
 
+/// Needle 3.
+///
+/// Mirrors `V2Engine` so switching generations is a class swap, with two
+/// differences that follow from the model rather than from taste:
+///
+/// * No `encode_contrastive` or `retrieve_tools`. v3 exports a confidence head
+///   and nothing else, so they would return empty on every call.
+/// * `reasoning()`, because v3 answers with a `<think>` block where v2 answered
+///   directly.
+#[pyclass(name = "V3Engine", module = "needle_rs")]
+struct PyV3Engine {
+    inner: V3Engine,
+}
+
+#[pymethods]
+impl PyV3Engine {
+    /// Load a `needle3.cact` model from disk.
+    #[staticmethod]
+    fn load(cact_path: &str) -> PyResult<Self> {
+        V3Engine::load(cact_path)
+            .map(|inner| Self { inner })
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
+    /// Load a `needle3.cact` model from an in-memory image.
+    #[staticmethod]
+    fn from_bytes(cact_bytes: &[u8]) -> PyResult<Self> {
+        V3Engine::from_bytes(cact_bytes.to_vec())
+            .map(|inner| Self { inner })
+            .map_err(|e| PyIOError::new_err(e.to_string()))
+    }
+
+    /// The full completion, reasoning included.
+    fn run(&self, query: &str, tools_json: &str) -> String {
+        self.inner.run(query, tools_json)
+    }
+
+    /// Just the tool-call payload.
+    ///
+    /// `"[]"` is a deliberate abstention — the model weighed the tools and
+    /// declined — where `None` means it emitted no `<tool_call>` markers at
+    /// all. Treating the first as a failure turns a considered "no" into an
+    /// error.
+    fn run_json(&self, query: &str, tools_json: &str) -> Option<String> {
+        self.inner.run_json(query, tools_json)
+    }
+
+    /// The chain-of-thought inside a completion, if it has one.
+    #[staticmethod]
+    fn reasoning(text: &str) -> Option<String> {
+        V3Engine::reasoning(text).map(str::to_string)
+    }
+
+    /// Pull the payload out of a completion you already have.
+    #[staticmethod]
+    fn extract_tool_call(text: &str) -> Option<String> {
+        extract_tool_call(text)
+    }
+
+    /// Generation with explicit settings.
+    ///
+    /// Returns a dict: `text`, `tool_call`, `reasoning`, `token_ids`,
+    /// `stop_reason`, `positions`.
+    #[pyo3(signature = (query, tools_json, max_new_tokens=0, temperature=0.0, seed=0,
+                        system=None, constrain=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn generate<'py>(
+        &self,
+        py: Python<'py>,
+        query: &str,
+        tools_json: &str,
+        max_new_tokens: usize,
+        temperature: f32,
+        seed: u64,
+        system: Option<String>,
+        constrain: bool,
+    ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let opts = V3Options {
+            max_new_tokens: if max_new_tokens == 0 {
+                DEFAULT_MAX_NEW_TOKENS
+            } else {
+                max_new_tokens
+            },
+            temperature,
+            seed,
+            system,
+            constrain,
+        };
+        let r = self.inner.generate(query, tools_json, &opts);
+        let d = pyo3::types::PyDict::new(py);
+        d.set_item("text", &r.text)?;
+        d.set_item("tool_call", extract_tool_call(&r.text))?;
+        d.set_item("reasoning", V3Engine::reasoning(&r.text))?;
+        d.set_item("token_ids", r.tokens.clone())?;
+        d.set_item("stop_reason", format!("{:?}", r.stop))?;
+        d.set_item("positions", r.positions)?;
+        Ok(d)
+    }
+
+    /// Generate, calling `callback(piece)` with each decoded delta.
+    ///
+    /// The callback receives decoded text, not raw tokenizer pieces:
+    /// concatenating every delta reproduces the return value exactly.
+    fn run_stream(&self, py: Python, query: &str, tools_json: &str, callback: Py<PyAny>) -> String {
+        self.inner
+            .generate_with(query, tools_json, &V3Options::default(), |_id, piece| {
+                let _ = callback.call1(py, (piece,));
+            })
+            .text
+    }
+
+    /// Whether this container carries a confidence head.
+    fn has_confidence(&self) -> bool {
+        self.inner.confidence.is_some()
+    }
+
+    /// How confident the model is in a completion it produced.
+    ///
+    /// Pass the **completion**, not the query. The head scores a finished
+    /// judgement. On the shipped checkpoint a correct call scores 0.93 and a
+    /// wrong one 0.26 — but a bare query scores 0.80, which looks like a
+    /// confident answer and is not one. v2 collapsed to near zero on a bare
+    /// query, so that misuse announced itself; v3's does not.
+    fn confidence_for(&self, query: &str, tools_json: &str, completion: &str) -> Option<f32> {
+        self.inner.confidence_for(query, tools_json, completion)
+    }
+
+    /// Generate, then score what was generated. Returns `(result, confidence)`.
+    fn run_scored<'py>(
+        &self,
+        py: Python<'py>,
+        query: &str,
+        tools_json: &str,
+    ) -> PyResult<(Bound<'py, pyo3::types::PyDict>, Option<f32>)> {
+        let (r, p) = self.inner.run_scored(query, tools_json);
+        let d = pyo3::types::PyDict::new(py);
+        d.set_item("text", &r.text)?;
+        d.set_item("tool_call", extract_tool_call(&r.text))?;
+        d.set_item("reasoning", V3Engine::reasoning(&r.text))?;
+        d.set_item("stop_reason", format!("{:?}", r.stop))?;
+        Ok((d, p))
+    }
+
+    /// Key/value cache bytes for a session of `seq_len` positions.
+    ///
+    /// Sized to the session rather than to the context limit, so this is what
+    /// a run actually costs — useful when deciding whether one fits.
+    fn kv_bytes(&self, seq_len: usize) -> usize {
+        self.inner.model.cfg.kv_bytes(seq_len, 4)
+    }
+
+    /// Context limit in tokens.
+    #[getter]
+    fn max_seq_len(&self) -> usize {
+        self.inner.model.cfg.max_seq_len
+    }
+}
+
 #[pymodule]
 fn needle_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNeedleEngine>()?;
     m.add_class::<PyV2Engine>()?;
+    m.add_class::<PyV3Engine>()?;
     Ok(())
 }
