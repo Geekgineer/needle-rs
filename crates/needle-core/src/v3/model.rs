@@ -19,6 +19,9 @@ use crate::v3::attention::{
     attend, attend_step, causal_depthwise_conv, norm_and_rope, AttnDims, Ring,
 };
 use crate::v3::cache::{Qkv, V3Cache};
+
+/// Positions per batched-prefill chunk.
+pub const DEFAULT_CHUNK: usize = 64;
 use crate::v3::config::V3Config;
 use crate::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
 use crate::v3::kernels::{hadamard_mlp, HadaMlp, HadaPerms};
@@ -487,8 +490,23 @@ impl V3Model {
         let mut k = vec![0.0f32; seq * k_dim];
         let mut v = vec![0.0f32; seq * v_dim];
         let mut attn = vec![0.0f32; seq * o_dim];
-        let mut gate = vec![0.0f32; o_dim];
-        let mut proj = vec![0.0f32; d];
+        let mut gates = vec![0.0f32; seq * o_dim];
+
+        // Chunked projection scratch. All four input projections share one
+        // prepared activation, which is only sound because they share
+        // `in_feat` and `group` — asserted rather than assumed.
+        let chunk = DEFAULT_CHUNK.min(seq.max(1));
+        let prep_len = self.layers[0].q_proj.prepared_len();
+        debug_assert!(self.layers.iter().all(|l| {
+            l.k_proj.prepared_len() == prep_len
+                && l.v_proj.prepared_len() == prep_len
+                && l.gate_proj.prepared_len() == prep_len
+        }));
+        let mut xh = vec![0.0f32; chunk * prep_len];
+        let out_prep = self.layers[0].out_proj.prepared_len();
+        let mut oh = vec![0.0f32; chunk * out_prep];
+        let mut projected = vec![0.0f32; seq * d];
+        let mut acc = vec![0.0f32; chunk];
         let mut mlp_out = vec![0.0f32; d];
 
         for li in 0..cfg.num_layers {
@@ -536,14 +554,62 @@ impl V3Model {
             }
 
             // ── Block ────────────────────────────────────────────────────
-            // Pre-attention norm, then projections over the whole sequence.
+            // Pre-attention norm, then projections in chunks.
+            //
+            // A matvec streams the whole packed weight set once per position —
+            // past any core's private cache — so a per-position loop re-reads
+            // it every time. Batching decodes each group once and applies it to
+            // the whole chunk, and `matmul_rows_prepared` is bit-identical to
+            // repeated matvecs rather than merely close.
+            //
+            // q, k, v and the gate all read the same activation with the same
+            // group geometry, so the Hadamard preparation is paid once for all
+            // four rather than four times.
             let mut h = bx.clone();
             for t in 0..seq {
                 zc_rms_norm_vec(&mut h[t * d..(t + 1) * d], &layer.norm_in);
-                let ht = &h[t * d..(t + 1) * d];
-                layer.q_proj.matvec(ht, &mut q[t * q_dim..(t + 1) * q_dim]);
-                layer.k_proj.matvec(ht, &mut k[t * k_dim..(t + 1) * k_dim]);
-                layer.v_proj.matvec(ht, &mut v[t * v_dim..(t + 1) * v_dim]);
+            }
+            for c0 in (0..seq).step_by(chunk) {
+                let b = (seq - c0).min(chunk);
+                for i in 0..b {
+                    layer.q_proj.prepare_input(
+                        &h[(c0 + i) * d..(c0 + i + 1) * d],
+                        &mut xh[i * prep_len..(i + 1) * prep_len],
+                    );
+                }
+                let xb = &xh[..b * prep_len];
+                layer.q_proj.matmul_rows_prepared(
+                    xb,
+                    b,
+                    0,
+                    q_dim,
+                    &mut q[c0 * q_dim..(c0 + b) * q_dim],
+                    &mut acc,
+                );
+                layer.k_proj.matmul_rows_prepared(
+                    xb,
+                    b,
+                    0,
+                    k_dim,
+                    &mut k[c0 * k_dim..(c0 + b) * k_dim],
+                    &mut acc,
+                );
+                layer.v_proj.matmul_rows_prepared(
+                    xb,
+                    b,
+                    0,
+                    v_dim,
+                    &mut v[c0 * v_dim..(c0 + b) * v_dim],
+                    &mut acc,
+                );
+                layer.gate_proj.matmul_rows_prepared(
+                    xb,
+                    b,
+                    0,
+                    o_dim,
+                    &mut gates[c0 * o_dim..(c0 + b) * o_dim],
+                    &mut acc,
+                );
             }
 
             if cfg.qkv_conv_taps > 0 {
@@ -574,14 +640,34 @@ impl V3Model {
 
             let agate = sigmoid(layer.attn_gate);
             for t in 0..seq {
-                // Sigmoid gate on the attention output, then out_proj.
-                layer.gate_proj.matvec(&h[t * d..(t + 1) * d], &mut gate);
                 let a = &mut attn[t * o_dim..(t + 1) * o_dim];
-                for (ai, &gi) in a.iter_mut().zip(gate.iter()) {
+                for (ai, &gi) in a.iter_mut().zip(&gates[t * o_dim..(t + 1) * o_dim]) {
                     *ai *= sigmoid(gi);
                 }
-                layer.out_proj.matvec(a, &mut proj);
-                zc_rms_norm_vec(&mut proj, &layer.post_norm);
+            }
+            // out_proj reads the gated attention output, so it gets its own
+            // preparation pass — a different activation and a different width
+            // from the four input projections.
+            for c0 in (0..seq).step_by(chunk) {
+                let b = (seq - c0).min(chunk);
+                for i in 0..b {
+                    layer.out_proj.prepare_input(
+                        &attn[(c0 + i) * o_dim..(c0 + i + 1) * o_dim],
+                        &mut oh[i * out_prep..(i + 1) * out_prep],
+                    );
+                }
+                layer.out_proj.matmul_rows_prepared(
+                    &oh[..b * out_prep],
+                    b,
+                    0,
+                    d,
+                    &mut projected[c0 * d..(c0 + b) * d],
+                    &mut acc,
+                );
+            }
+            for t in 0..seq {
+                let proj = &mut projected[t * d..(t + 1) * d];
+                zc_rms_norm_vec(proj, &layer.post_norm);
 
                 // Attention residual, then the MLP residual.
                 let s1 = &mut bx[t * d..(t + 1) * d];
@@ -589,8 +675,8 @@ impl V3Model {
                     *si += agate * pi;
                 }
                 proj.copy_from_slice(s1);
-                zc_rms_norm_vec(&mut proj, &layer.pre_hada);
-                hadamard_mlp(&proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
+                zc_rms_norm_vec(proj, &layer.pre_hada);
+                hadamard_mlp(proj, &layer.mlp, &self.perms, cfg.hada_n, &mut mlp_out);
                 for (si, &mi) in s1.iter_mut().zip(mlp_out.iter()) {
                     *si += mi;
                 }
@@ -632,23 +718,42 @@ impl V3Model {
             }
         }
 
-        // Mean over lanes, final norm, tied head.
+        // Mean over lanes, final norm, then the tied head — batched, because
+        // at 8192 x 768 it is a fifth of the whole forward pass.
         let mut logits = vec![0.0f32; seq * rows];
-        let mut x = vec![0.0f32; d];
-        let mut lm_prep = vec![0.0f32; self.embedding.prepared_len()];
-        let mut full = vec![0.0f32; self.cfg.vocab_size];
+        let mut pooled = vec![0.0f32; seq * d];
         for t in 0..seq {
-            for c in 0..d {
-                let mut acc = 0.0f32;
+            let out = &mut pooled[t * d..(t + 1) * d];
+            for (c, o) in out.iter_mut().enumerate() {
+                let mut a = 0.0f32;
                 for lane in 0..n {
-                    acc += lanes[(t * n + lane) * d + c];
+                    a += lanes[(t * n + lane) * d + c];
                 }
-                x[c] = acc / n as f32;
+                *o = a / n as f32;
             }
-            zc_rms_norm_vec(&mut x, &self.final_norm);
-            self.embedding.prepare_input(&x, &mut lm_prep);
-            self.embedding.matvec_prepared(&lm_prep, &mut full);
-            logits[t * rows..(t + 1) * rows].copy_from_slice(&full[..rows]);
+            zc_rms_norm_vec(out, &self.final_norm);
+        }
+
+        let lm_prep_len = self.embedding.prepared_len();
+        let mut lh = vec![0.0f32; chunk * lm_prep_len];
+        for c0 in (0..seq).step_by(chunk) {
+            let b = (seq - c0).min(chunk);
+            for i in 0..b {
+                self.embedding.prepare_input(
+                    &pooled[(c0 + i) * d..(c0 + i + 1) * d],
+                    &mut lh[i * lm_prep_len..(i + 1) * lm_prep_len],
+                );
+            }
+            // `rows` may be a prefix of the vocabulary: rows past `out_vocab`
+            // are input-only code embeddings and are never scored.
+            self.embedding.matmul_rows_prepared(
+                &lh[..b * lm_prep_len],
+                b,
+                0,
+                rows,
+                &mut logits[c0 * rows..(c0 + b) * rows],
+                &mut acc,
+            );
         }
         logits
     }
