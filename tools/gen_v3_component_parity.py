@@ -24,6 +24,10 @@ from needle.model.architecture import (
     MultiHeadAttention,
     _hada_blocks,
     _hada_perms,
+    Engram,
+    engram_geometry,
+    engram_indices,
+    _mask_diag,
     head_dims,
     make_causal_mask,
     precompute_rope_freqs,
@@ -147,6 +151,72 @@ def main():
         if name in a0:
             rec["components"][f"attn_{name}"] = blob.add(np.asarray(a0[name], np.float32))
     print(f"  attention     in {ax.shape} -> out {tuple(np.asarray(aout).shape)}")
+
+
+    # --- Engram, site 0 --------------------------------------------------
+    # The hash indices are integers, so they are checked exactly; a wrong
+    # seed or a wrong shift would otherwise only show up as drifted logits.
+    orders, eheads, sub_dim = engram_geometry(cfg)
+    slots = cfg.engram_slots
+    seed_heads = int(getattr(cfg, "engram_seed_heads", 0))
+    num_tables = len(orders) * eheads
+
+    etok = np.array([[2, 511, 77, 1024, 8, 8, 300, 4095]], dtype=np.int32)
+    ET = etok.shape[1]
+    emask = make_causal_mask(ET)
+    idx = np.asarray(engram_indices(jnp.asarray(etok), orders, eheads, slots, seed_heads))
+
+    ngram_ok = jnp.stack(
+        [_mask_diag(emask, o - 1) for o in orders for _ in range(eheads)], axis=-1
+    )
+    tap_ok = jnp.stack([_mask_diag(emask, j * max(orders)) for j in range(4)])
+
+    eg0 = params["engrams_0"]
+    eg_params = {
+        "embedding": jnp.asarray(eg0["embedding"]),
+        "key_proj": {"kernel": jnp.asarray(eg0["key_proj"]["kernel"])},
+        "value_proj": {"kernel": jnp.asarray(eg0["value_proj"]["kernel"])},
+        "taps": jnp.asarray(eg0["taps"]),
+    }
+    engram = Engram(
+        d_model=cfg.d_model,
+        num_tables=num_tables,
+        slots=slots,
+        sub_dim=sub_dim,
+        num_layers=cfg.num_layers,
+        conv_dilation=int(getattr(cfg, "engram_conv_dilation", 3)),
+        dtype=jnp.float32,
+    )
+    ek, ev = engram.apply({"params": eg_params}, jnp.asarray(idx), ngram_ok, tap_ok)
+
+    rec["geometry"].update(
+        {
+            "engram_orders": [int(o) for o in orders],
+            "engram_heads": int(eheads),
+            "engram_sub_dim": int(sub_dim),
+            "engram_slots": int(slots),
+            "engram_seed_heads": seed_heads,
+            "engram_num_tables": int(num_tables),
+            "engram_conv_dilation": int(getattr(cfg, "engram_conv_dilation", 3)),
+            "engram_seq": int(ET),
+        }
+    )
+    rec["engram_tokens"] = [int(t) for t in etok[0]]
+    rec["engram_indices"] = [[int(v) for v in row] for row in idx[0]]
+    rec["components"]["engram_k"] = blob.add(np.asarray(ek, np.float32)[0])
+    rec["components"]["engram_v"] = blob.add(np.asarray(ev, np.float32)[0])
+    rec["components"]["engram_key_proj"] = blob.add(
+        np.asarray(eg0["key_proj"]["kernel"], np.float32)
+    )
+    rec["components"]["engram_value_proj"] = blob.add(
+        np.asarray(eg0["value_proj"]["kernel"], np.float32)
+    )
+    rec["components"]["engram_taps"] = blob.add(np.asarray(eg0["taps"], np.float32))
+    # Only the rows this test touches, so the fixture stays small.
+    rows = np.asarray(eg0["embedding"], np.float32)
+    picked = np.stack([rows[t, idx[0, :, t]] for t in range(num_tables)], axis=1)
+    rec["components"]["engram_rows"] = blob.add(picked)
+    print(f"  engram        tokens {etok.shape} -> k {tuple(np.asarray(ek).shape)}")
 
     # Sanity: the learned factors are initialised to Walsh but trained, so
     # record how far they have drifted. If they were still exactly Walsh a

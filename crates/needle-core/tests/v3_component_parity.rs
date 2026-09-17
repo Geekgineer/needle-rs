@@ -9,6 +9,7 @@ use std::path::Path;
 
 use needle_core::ops::sigmoid;
 use needle_core::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
+use needle_core::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
 use needle_core::v3::kernels::{hada_blocks, hadamard_mlp, HadaMlp, HadaPerms};
 
 /// `y = x · W` for a row-major `(in, out)` kernel, the orientation the
@@ -246,4 +247,134 @@ fn attention_matches_the_reference() {
         rel < 1e-4,
         "attention deviates from the f32 reference by {rel:.3e} of RMS (abs {worst:.3e})"
     );
+}
+
+#[test]
+fn engram_hash_indices_are_exact() {
+    let Some(f) = Fixture::load() else { return };
+    let g = &f.meta["geometry"];
+    let u = |k: &str| g[k].as_u64().unwrap() as usize;
+
+    let orders: Vec<usize> = g["engram_orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as usize)
+        .collect();
+    let heads = u("engram_heads");
+    let slots = u("engram_slots") as u32;
+    let seed_heads = u("engram_seed_heads");
+    let num_tables = u("engram_num_tables");
+
+    let tokens: Vec<u32> = f.meta["engram_tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as u32)
+        .collect();
+
+    let got = engram_indices(&tokens, &orders, heads, slots, seed_heads);
+    let want = f.meta["engram_indices"].as_array().unwrap();
+    assert_eq!(want.len(), tokens.len(), "one row per position");
+
+    for (p, row) in want.iter().enumerate() {
+        let row = row.as_array().unwrap();
+        assert_eq!(row.len(), num_tables);
+        for (t, cell) in row.iter().enumerate() {
+            let expect = cell.as_u64().unwrap() as u32;
+            assert_eq!(
+                got[p * num_tables + t],
+                expect,
+                "slot for position {p} table {t}"
+            );
+        }
+    }
+    println!(
+        "engram: {} positions x {num_tables} tables hash exactly",
+        tokens.len()
+    );
+}
+
+#[test]
+fn engram_keys_and_values_match_the_reference() {
+    let Some(f) = Fixture::load() else { return };
+    let g = &f.meta["geometry"];
+    let u = |k: &str| g[k].as_u64().unwrap() as usize;
+
+    let d_model = u("d_model");
+    let seq = u("engram_seq");
+    let orders: Vec<usize> = g["engram_orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as usize)
+        .collect();
+    let heads = u("engram_heads");
+    let dims = EngramDims {
+        num_tables: u("engram_num_tables"),
+        slots: u("engram_slots"),
+        sub_dim: u("engram_sub_dim"),
+        d_model,
+        conv_taps: 4,
+        conv_dilation: u("engram_conv_dilation"),
+        max_order: *orders.iter().max().unwrap(),
+    };
+
+    // Rows already gathered by the fixture; masking is what is under test.
+    let rows = f.get("engram_rows");
+    let fetch_dim = dims.num_tables * dims.sub_dim;
+    assert_eq!(
+        fetch_dim, d_model,
+        "concatenated fetch should be d_model wide"
+    );
+
+    let key_w = f.get("engram_key_proj");
+    let val_w = f.get("engram_value_proj");
+    let taps = f.get("engram_taps");
+
+    let mut k_got = vec![0.0f32; seq * d_model];
+    let mut v_got = vec![0.0f32; seq * d_model];
+    let mut e = vec![0.0f32; fetch_dim];
+    for p in 0..seq {
+        for t in 0..dims.num_tables {
+            let dst = &mut e[t * dims.sub_dim..(t + 1) * dims.sub_dim];
+            if ngram_valid(p, t, &orders, heads) {
+                let src = (p * dims.num_tables + t) * dims.sub_dim;
+                dst.copy_from_slice(&rows[src..src + dims.sub_dim]);
+            } else {
+                dst.fill(0.0);
+            }
+        }
+        dense(
+            &e,
+            &key_w,
+            fetch_dim,
+            d_model,
+            &mut k_got[p * d_model..(p + 1) * d_model],
+        );
+        dense(
+            &e,
+            &val_w,
+            fetch_dim,
+            d_model,
+            &mut v_got[p * d_model..(p + 1) * d_model],
+        );
+    }
+    value_conv(&mut v_got, &taps, seq, &dims);
+
+    for (label, got, want) in [
+        ("engram k", &k_got, f.get("engram_k")),
+        ("engram v", &v_got, f.get("engram_v")),
+    ] {
+        let mut worst = 0.0f32;
+        let mut sq = 0.0f64;
+        for (&a, &b) in got.iter().zip(&want) {
+            sq += (b as f64) * (b as f64);
+            worst = worst.max((a - b).abs());
+        }
+        let rms = (sq / want.len() as f64).sqrt() as f32;
+        let rel = worst / rms;
+        println!("{label}: max abs {worst:.3e} vs RMS {rms:.3} = {rel:.3e} relative");
+        assert!(rel < 1e-4, "{label} deviates by {rel:.3e} of RMS");
+    }
 }
