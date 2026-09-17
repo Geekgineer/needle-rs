@@ -17,6 +17,7 @@
 //! `needle_free_str` and `needle_last_error` with the above.
 
 pub mod v2;
+pub mod v3;
 
 use needle_infer::NeedleEngine;
 use std::ffi::{CStr, CString};

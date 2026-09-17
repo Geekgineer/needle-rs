@@ -355,6 +355,112 @@ void needle_free_str(char *s);
  */
 void needle_free(NeedleHandle *handle);
 
+/* ── Needle 3 ───────────────────────────────────────────────────────────── */
+
+/**
+ * Opaque handle to a loaded Needle 3 engine.
+ *
+ * Needle 3 ships as a `.cact` container like v2, but the two are different
+ * formats with different headers. The container states its generation in its
+ * first word, so load the one that matches; a v2 container handed to
+ * needle_v3_load() fails rather than being misread.
+ */
+typedef struct NeedleV3Handle NeedleV3Handle;
+
+/** Load Needle 3 from a .cact file. NULL on failure; free with needle_v3_free(). */
+NeedleV3Handle *needle_v3_load(const char *cact_path);
+
+/** Load Needle 3 from bytes already in memory. */
+NeedleV3Handle *needle_v3_load_bytes(const unsigned char *data, size_t len);
+
+/**
+ * Full completion, reasoning included. Free with needle_free_str().
+ *
+ * Needle 3 usually answers with a <think> block before the call, which v2 did
+ * not. Use needle_v3_run_json() if you only want the payload.
+ */
+char *needle_v3_run(NeedleV3Handle *handle, const char *query, const char *tools_json);
+
+/**
+ * Tool-call payload only. Free with needle_free_str().
+ *
+ * Returns "[]" when the model considered the tools and declined — a decision,
+ * not a failure — and "" when it emitted no <tool_call> markers at all.
+ * Collapsing the two turns a considered "no" into an error.
+ */
+char *needle_v3_run_json(NeedleV3Handle *handle, const char *query, const char *tools_json);
+
+/**
+ * The chain-of-thought inside a completion, or NULL if there is none.
+ * Free with needle_free_str().
+ */
+char *needle_v3_reasoning(NeedleV3Handle *handle, const char *text);
+
+/**
+ * Generate with explicit settings. max_new_tokens == 0 uses the default.
+ * `constrain` restricts the tool-call payload to the declared schema.
+ */
+char *needle_v3_generate(NeedleV3Handle *handle,
+                         const char    *query,
+                         const char    *tools_json,
+                         size_t         max_new_tokens,
+                         float          temperature,
+                         uint64_t       seed,
+                         bool           constrain);
+
+/**
+ * Generate, invoking cb(piece, userdata) with each decoded delta.
+ *
+ * The callback receives decoded text, not raw tokenizer pieces: concatenating
+ * every delta reproduces the returned string exactly.
+ */
+char *needle_v3_run_stream(NeedleV3Handle *handle,
+                           const char     *query,
+                           const char     *tools_json,
+                           void (*cb)(const char *piece, void *userdata),
+                           void           *userdata);
+
+/** Whether this container carries a confidence head. */
+bool needle_v3_has_confidence(NeedleV3Handle *handle);
+
+/**
+ * How confident the model is in a completion it produced.
+ *
+ * PASS THE COMPLETION, NOT THE QUERY. The head scores a finished judgement.
+ * On the shipped checkpoint a correct call scores 0.93 and a wrong one 0.26 —
+ * but a bare query scores 0.80, which looks like a confident answer and is
+ * not one. Needle 2 collapsed to near zero on a bare query, so that misuse
+ * announced itself; Needle 3's does not.
+ *
+ * Writes a probability in (0, 1) to *out and returns true.
+ */
+bool needle_v3_confidence_for(NeedleV3Handle *handle,
+                              const char     *query,
+                              const char     *tools_json,
+                              const char     *completion,
+                              float          *out);
+
+/**
+ * Key/value cache bytes for a session of seq_len positions.
+ *
+ * Exposed because the caller usually owns the memory budget. Counts the cache
+ * only; the packed weights are a separate fixed cost.
+ */
+size_t needle_v3_kv_bytes(NeedleV3Handle *handle, size_t seq_len);
+
+/** Context limit in tokens. */
+size_t needle_v3_max_seq_len(NeedleV3Handle *handle);
+
+/** Release a Needle 3 handle. Safe to call with NULL. */
+void needle_v3_free(NeedleV3Handle *handle);
+
+/*
+ * Deliberately absent: needle_v3_retrieve_tools and
+ * needle_v3_encode_contrastive. Needle 3 exports a confidence head and nothing
+ * else, so they would fail on every call. A missing symbol is a compile error
+ * at the call site; a present one that always fails is a runtime mystery.
+ */
+
 /* ── Error reporting ────────────────────────────────────────────────────── */
 
 /**
