@@ -89,7 +89,7 @@
           fill="#6E7681" letter-spacing="1.5">MODEL &#183; ONE FILE</text>
   </g>
 
-  <!-- Card 3: both model generations -->
+  <!-- Card 3: all three model generations -->
   <g transform="translate(690, 274)">
     <rect width="180" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
     <text x="16" y="28"

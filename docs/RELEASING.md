@@ -74,14 +74,27 @@ published version as permanent, so a leaked token cannot be undone by yanking.
    cargo clippy -p needle-core --no-default-features --release -- -D warnings
    cargo +1.87 check --workspace          # MSRV
    wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg-nodejs/
-   node crates/needle-wasm/tests/node_e2e_v2.js
+   node crates/needle-wasm/tests/node_e2e.js      # v1
+   node crates/needle-wasm/tests/node_e2e_v2.js   # v2
+   node crates/needle-wasm/tests/node_e2e_v3.js   # v3
    ```
-   The parity suites need `weights/needle2.cact`, `weights/needle.safetensors`
-   and `weights/vocab.txt`; each skips with a printed notice if absent, so a run
-   that is silently green may have tested nothing. Check the counts.
+   The parity suites need `weights/needle3.cact`, `weights/needle2.cact`,
+   `weights/needle.safetensors` and `weights/vocab.txt`; each skips with a
+   printed notice if absent, so a run that is silently green may have tested
+   nothing. Check the counts.
+
+   The Python bindings are no longer verified only by hand — the `parity-v3` CI
+   job builds the wheel and runs `crates/needle-python/tests/test_v3.py`. To
+   reproduce it locally, build from the repo root so the distribution is named
+   `needle-rs`:
+   ```bash
+   maturin build --release --out dist/
+   pip install --no-index --find-links dist/ needle-rs
+   python crates/needle-python/tests/test_v3.py
+   ```
 4. **Tag and push.**
    ```bash
-   git tag -a v0.2.0 -m "needle-rs 0.2.0" && git push origin v0.2.0
+   git tag -a v0.3.0 -m "needle-rs 0.3.0" && git push origin v0.3.0
    ```
 5. **Watch the run.** `version-guard` gates everything; if a publish job fails
    partway, re-running is safe — every publish step is idempotent (npm checks
