@@ -372,7 +372,7 @@ a two-generation build on an M4 Max and are not comparable.
 |---|---|---|
 | CLI binary (`needle-rs`) | **765 KB** | stripped release, all three engines |
 | C shared library (`libneedle_c.dylib`) | **815 KB** | cdylib, stable C ABI, all three surfaces |
-| WASM module (`needle_wasm_bg.wasm`) | **537 KB** | after `wasm-opt -Oz`; **162 KB** at `brotli -q 11`, 205 KB gzipped |
+| WASM module (`needle_wasm_bg.wasm`) | **537 KB** | after `wasm-opt -Oz`; **195 KB** as Cloudflare Pages actually serves it (brotli), 204 KB gzipped, 162 KB if you compress it yourself at `brotli -q 11` |
 | — same module, unoptimised | 605 KB | what `wasm-pack build` alone emits |
 
 `wasm-opt` is **not** run by `wasm-pack` here — the crate sets
@@ -393,7 +393,7 @@ Weights, per version:
 | v1 | `needle.safetensors` + `vocab.txt` | **22 MB** + 122 KB |
 
 Smallest complete browser deployment is still v2: 537 KB of runtime plus a
-13.7 MB container, 162 KB + 13.7 MB over the wire with brotli. A generation
+13.7 MB container, 195 KB + 13.7 MB over the wire as served. A generation
 session needs roughly 23 MB of working memory on top (see [Memory](#memory)).
 v3 is the same runtime with a 35.3 MB container and a larger cache — see the
 Needle v3 section.

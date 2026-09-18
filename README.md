@@ -63,7 +63,7 @@ Tool calling usually means a paid API round-trip or hundreds of megabytes on dis
 </tbody>
 </table>
 
-The runtime is 537 KB of WebAssembly (162 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; a Needle 3 session adds 8.8 MB of key/value cache at 512 tokens, or 2.3 MB with `--kv-int8` — see [choosing a generation](#generations).
+The runtime is 537 KB of WebAssembly (195 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; a Needle 3 session adds 8.8 MB of key/value cache at 512 tokens, or 2.3 MB with `--kv-int8` — see [choosing a generation](#generations).
 
 <br/>
 
@@ -262,7 +262,7 @@ Every example in [`examples/`](examples/) runs on all three.
 <table>
 <thead><tr><th align="left">Target</th><th align="center">Status</th><th align="right">Binary</th></tr></thead>
 <tbody>
-<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>537 KB</code> <sub>162 KB over the wire</sub></td></tr>
+<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>537 KB</code> <sub>195 KB over the wire</sub></td></tr>
 <tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>765 KB</code></td></tr>
 <tr><td>Python <sub>(abi3 wheel, CPython ≥ 3.8)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
 <tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v3_*</code> + <code>needle_v2_*</code> + <code>needle_*</code></td></tr>

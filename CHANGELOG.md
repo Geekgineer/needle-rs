@@ -66,7 +66,7 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
   matters because pretty-printed schemas change the model's answer.
 - `silu`, `rms_unit`, `rms_unit_to` and `sinkhorn` moved to a shared layer.
   v2 keeps its import paths through re-exports.
-- The WASM module is **537 KB** with three engines (162 KB over the wire),
+- The WASM module is **537 KB** with three engines (195 KB over the wire),
   against 413 KB with two. That is the cost of carrying v1, v2 and v3 in one
   module.
 
