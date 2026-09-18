@@ -448,9 +448,10 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
     ];
 
     const $ = (id) => document.getElementById(id);
-    // Needle 2 is the default even though Needle 3 is listed first: a first
-    // visit otherwise pays a 35 MB download before seeing anything work.
-    // Needle 3 is one click away and labelled "newest".
+    // Needle 3 is the default: it is the current generation, and a visitor
+    // arriving from a release link expects to try that one. It costs a 35 MB
+    // first download against Needle 2's 13.7 MB, which is the trade — Needle 2
+    // is one click away and labelled "smallest".
     let selected = "v3";
     let engine = null;
     let active = null;  // the MODELS entry currently loaded
@@ -609,7 +610,13 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
         applyCapabilities(m);
         renderExamples();
 
-        const dim = engine.contrastive_dim();
+        // Needle 3 exports no contrastive head, so this method does not exist
+        // on NeedleV3Wasm at all — it is absent rather than returning 0. Ask
+        // the capability table, not the engine, or the success path throws and
+        // a correctly loaded model reports itself as an error.
+        const dim = m.caps.retrieval && typeof engine.contrastive_dim === "function"
+          ? engine.contrastive_dim()
+          : 0;
         setStatus("ready", dim > 0 ? `${m.name} ready · ${dim}-d retrieval` : `${m.name} ready`);
       } catch (err) {
         console.error(err);
@@ -744,7 +751,7 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
 
         const list = $("retrieval-list");
         list.innerHTML = "";
-        if (caps.retrieval && descs.length && engine.contrastive_dim() > 0) {
+        if (caps.retrieval && descs.length && typeof engine.contrastive_dim === "function" && engine.contrastive_dim() > 0) {
           const ranked = JSON.parse(engine.retrieve_tools(query, JSON.stringify(descs), descs.length));
           for (const [idx, score] of ranked) {
             const pct = Math.max(0, Math.min(100, score * 100));
