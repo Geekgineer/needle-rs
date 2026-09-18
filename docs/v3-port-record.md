@@ -265,6 +265,23 @@ downloaded: `tests/v3_container_offline.rs`, which assembles a synthetic v3
 container byte for byte and walks the canon on it, and the header tests in
 `cact.rs`.
 
+### The canon check without JAX
+
+`tools/needle3_reference.py` answers the same question as
+`tools/check_v3_canon.py` and needs numpy alone. It reads the container
+directly — geometry, weights, permutations and tokenizer all ride inside it —
+so it needs neither the parity interpreter nor a pinned `needle` checkout:
+
+```
+python3 tools/needle3_reference.py weights/needle3.cact --expect get_weather
+```
+
+It recomputes every position from the whole prefix, so it takes about three
+minutes for one answer. The JAX oracles stay the primary reference, because
+they are upstream's own code; this one is a second opinion for a contributor
+who cannot install JAX, and an independent transcription of
+`architecture.py` for anyone reading the port.
+
 ## Reference files (upstream, treat as spec)
 
 Vendored at `needle/`, pinned to the local branch `needle3-oracle` at
