@@ -255,3 +255,77 @@ fn cells_and_confidence_match_the_reference() {
         "confidence logit {logit} vs reference {expect}"
     );
 }
+
+#[test]
+fn batched_prefill_leaves_the_cache_where_stepping_would() {
+    let Some(f) = Fixture::load() else { return };
+    let tokens: Vec<u32> = f.meta["tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as u32)
+        .collect();
+    let rows = f.meta["geometry"]["out_vocab"].as_u64().unwrap() as usize;
+
+    let cact = CactV3::load(CACT).expect("load container");
+    let model = model_from_cact(&cact).expect("build model");
+
+    // Reference: step every token, then decode a few more.
+    let mut stepped = V3Cache::new(&model.cfg, tokens.len() + 8);
+    let mut logits = Vec::new();
+    let t0 = std::time::Instant::now();
+    for &tok in &tokens {
+        logits = model.decode_step(&mut stepped, tok);
+    }
+    let step_time = t0.elapsed();
+    let mut want_next = Vec::new();
+    let mut l = logits.clone();
+    for _ in 0..6 {
+        let n = argmax(&l);
+        want_next.push(n);
+        l = model.decode_step(&mut stepped, n);
+    }
+
+    // Batched prefill, then continue from the cache it filled.
+    let mut filled = V3Cache::new(&model.cfg, tokens.len() + 8);
+    let t1 = std::time::Instant::now();
+    let pre = model.prefill(&tokens, &mut filled);
+    let pre_time = t1.elapsed();
+    assert_eq!(pre.len(), rows);
+
+    let mut got_next = Vec::new();
+    let mut l = pre.clone();
+    for _ in 0..6 {
+        let n = argmax(&l);
+        got_next.push(n);
+        l = model.decode_step(&mut filled, n);
+    }
+
+    println!(
+        "prefill {} tokens: stepped {step_time:?}, batched {pre_time:?} ({:.2}x)",
+        tokens.len(),
+        step_time.as_secs_f64() / pre_time.as_secs_f64()
+    );
+
+    // The continuation is what matters: if the cache were seeded wrongly — a
+    // conv tail, an engram tail, a position — the first few tokens would still
+    // look plausible and then drift.
+    assert_eq!(
+        got_next, want_next,
+        "continuation after batched prefill diverged from stepping"
+    );
+
+    let mut worst = 0.0f32;
+    for (&a, &b) in pre.iter().zip(&logits) {
+        worst = worst.max((a - b).abs());
+    }
+    println!("  last-position logits differ by at most {worst:.3e}");
+}
+
+fn argmax(v: &[f32]) -> u32 {
+    v.iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(i, _)| i as u32)
+        .unwrap()
+}

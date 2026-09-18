@@ -240,3 +240,18 @@ fn constraining_does_not_disturb_a_clean_answer() {
         free.text, bound.text
     );
 }
+
+// An end-to-end oversized-prompt test would cost an 8192-position prefill for
+// what is one comparison, so the dangerous half is tested where it is cheap:
+// `v3::cache::tests::a_global_layer_never_asks_for_more_than_it_stores` proves
+// the ring cannot be over-read past the context, which is the failure that
+// would otherwise be silent in release. This side just checks the flag is not
+// raised when it should not be.
+
+#[test]
+fn a_normal_prompt_is_not_flagged_as_truncated() {
+    let Some(e) = engine() else { return };
+    let res = e.generate("What's the weather in Paris?", TOOLS, &V3Options::default());
+    assert!(!res.prompt_truncated);
+    assert!(res.positions < e.model.cfg.max_seq_len);
+}

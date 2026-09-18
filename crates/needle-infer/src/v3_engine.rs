@@ -72,6 +72,9 @@ pub struct V3Result {
     pub stop: StopReason,
     /// Positions consumed, prompt included.
     pub positions: usize,
+    /// The prompt did not fit in the context and was cut. The answer is built
+    /// on a partial prompt and should be treated with suspicion.
+    pub prompt_truncated: bool,
 }
 
 /// A loaded Needle 3 model with its tokenizer.
@@ -139,20 +142,29 @@ impl V3Engine {
         let prompt = build_prompt(query, tools_json, opts.system.as_deref());
         let mut ids = alloc_prompt_ids(self.bos_id, &self.tokenizer, &prompt);
 
-        let budget = self
-            .model
-            .cfg
-            .max_seq_len
-            .saturating_sub(ids.len())
-            .min(opts.max_new_tokens);
+        // A prompt longer than the context cannot be served. Truncating and
+        // saying so beats running past the limit, where the global layers'
+        // ring would wrap and attention would read positions as their own
+        // past — bounded now, but still not what the model was trained on.
+        let max = self.model.cfg.max_seq_len;
+        let prompt_truncated = ids.len() > max;
+        if prompt_truncated {
+            ids.truncate(max);
+        }
+
+        let budget = max.saturating_sub(ids.len()).min(opts.max_new_tokens);
         let mut cache = V3Cache::new(&self.model.cfg, ids.len() + budget);
 
-        // Prefill: every prompt token but the last only fills the cache. The
-        // last one produces the first prediction.
-        let mut logits = Vec::new();
-        for &tok in &ids {
-            logits = self.model.decode_step(&mut cache, tok);
-        }
+        // Prefill the whole prompt in one batched pass, then continue from the
+        // cache it fills. Stepping the prompt through `decode_step` costs a
+        // full weight sweep per position; this pays it once per chunk, and the
+        // result is bit-identical — `batched_prefill_leaves_the_cache_where_
+        // stepping_would` asserts the continuation, not just the logits.
+        let mut logits = if ids.is_empty() {
+            Vec::new()
+        } else {
+            self.model.prefill(&ids, &mut cache)
+        };
 
         let mut out_tokens = Vec::new();
         let mut emitted = String::new();
@@ -230,8 +242,13 @@ impl V3Engine {
         V3Result {
             text: self.tokenizer.decode(&out_tokens),
             tokens: out_tokens,
-            stop,
+            stop: if prompt_truncated {
+                StopReason::MaxSeqLen
+            } else {
+                stop
+            },
             positions: cache.pos(),
+            prompt_truncated,
         }
     }
 
@@ -277,6 +294,8 @@ impl V3Engine {
         let mut ids = Vec::with_capacity(text.len() / 3 + 2);
         ids.push(self.bos_id);
         ids.extend(self.tokenizer.encode(&text));
+        // Same bound as generation: past the context the global layers' ring
+        // wraps, so a longer input would be scored on history it cannot see.
         ids.truncate(self.model.cfg.max_seq_len);
 
         let cells = self.model.forward_cells(&ids);

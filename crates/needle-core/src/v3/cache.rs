@@ -162,11 +162,32 @@ impl V3Cache {
     }
 
     /// The inclusive logical range layer `li` may attend to at `pos`.
+    ///
+    /// Clamped to the ring's capacity. A global layer past `max_seq_len` would
+    /// otherwise ask for more history than it stores, and because slots are
+    /// addressed modulo the capacity it would read *itself* as its own past —
+    /// silently, since the bounds check is a debug assertion. Degrading to the
+    /// most recent `slots` positions is wrong too, but it is bounded, visible
+    /// through [`Self::is_saturated`], and cannot corrupt.
+    ///
+    /// Callers should avoid reaching this: see `V3Engine`, which bounds the
+    /// prompt and reports `StopReason::MaxSeqLen`.
     pub fn span(&self, li: usize, pos: usize) -> (usize, usize) {
-        match self.cfg.attention_span(li) {
-            Some(w) if pos + 1 > w => (pos + 1 - w, pos),
-            _ => (0, pos),
-        }
+        let slots = self.layers[li].slots;
+        let lo = match self.cfg.attention_span(li) {
+            Some(w) if pos + 1 > w => pos + 1 - w,
+            _ => 0,
+        };
+        // Never ask for a wider window than the ring holds.
+        let lo = lo.max((pos + 1).saturating_sub(slots));
+        (lo, pos)
+    }
+
+    /// True once any layer has run past what it can store, so attention is no
+    /// longer seeing the history the model was trained to see.
+    pub fn is_saturated(&self) -> bool {
+        (0..self.cfg.num_layers)
+            .any(|li| self.cfg.attention_span(li).is_none() && self.pos > self.layers[li].slots)
     }
 
     /// Ring capacity for layer `li`.
@@ -273,6 +294,42 @@ impl V3Cache {
             tail[last..last + d].copy_from_slice(raw);
         }
         raw.copy_from_slice(&out);
+    }
+
+    /// Seed the conv tail for a layer after a batched prefill.
+    ///
+    /// `raw` holds the last `qkv_conv_taps - 1` **pre-convolution** vectors for
+    /// this projection, oldest first. The batched path convolves in place, so
+    /// the caller has to keep these before it does.
+    pub fn seed_conv_tail(&mut self, li: usize, which: Qkv, raw: &[f32]) {
+        let layer = &mut self.layers[li];
+        let tail = match which {
+            Qkv::Q => &mut layer.q_tail,
+            Qkv::K => &mut layer.k_tail,
+            Qkv::V => &mut layer.v_tail,
+        };
+        debug_assert_eq!(raw.len(), tail.len());
+        tail.copy_from_slice(raw);
+    }
+
+    /// Seed one site's Engram value tail, oldest first, pre-convolution.
+    pub fn seed_engram_tail(&mut self, site: usize, raw: &[f32]) {
+        let tail = &mut self.engram_tail[site];
+        debug_assert_eq!(raw.len(), tail.len());
+        tail.copy_from_slice(raw);
+    }
+
+    /// Seed the token history the n-gram hash reads, oldest first.
+    pub fn seed_tokens(&mut self, tokens: &[u32]) {
+        let keep = self.cfg.engram.orders.iter().copied().max().unwrap_or(1);
+        self.tokens.clear();
+        let start = tokens.len().saturating_sub(keep);
+        self.tokens.extend_from_slice(&tokens[start..]);
+    }
+
+    /// Set the next write position after a batched prefill.
+    pub fn set_pos(&mut self, pos: usize) {
+        self.pos = pos;
     }
 
     /// Advance to the next position. Call once per decoded token, after every
@@ -392,6 +449,39 @@ mod tests {
     }
 
     #[test]
+    fn a_global_layer_never_asks_for_more_than_it_stores() {
+        // Past max_seq_len the ring wraps, and an unclamped span would make a
+        // position read itself as its own past — silently in release, where
+        // the bounds check is compiled out.
+        let mut c = shipped();
+        c.max_seq_len = 8;
+        c.sliding_window = 4;
+        c.num_layers = 2;
+        c.global_layers = vec![1];
+        let mut cache = V3Cache::new(&c, 8);
+        let k = vec![0.0f32; c.k_dim()];
+        let v = vec![0.0f32; c.v_dim()];
+
+        for pos in 0..12 {
+            cache.write_kv(1, pos, &k, &v);
+            let (lo, hi) = cache.span(1, pos);
+            let slots = cache.slots(1);
+            assert!(
+                hi - lo < slots,
+                "span {lo}..={hi} exceeds {slots} slots at position {pos}"
+            );
+        }
+        // And the caller can see that history was lost.
+        for _ in 0..12 {
+            cache.advance();
+        }
+        assert!(
+            cache.is_saturated(),
+            "running past the context must be visible"
+        );
+    }
+
+    #[test]
     fn a_short_session_pays_for_what_it_uses() {
         let c = shipped();
         let k = vec![0.0f32; c.k_dim()];
@@ -457,11 +547,19 @@ mod tests {
     #[test]
     fn spans_bound_local_layers_only() {
         let c = cfg();
-        let cache = V3Cache::new(&c, 8);
+        let mut cache = V3Cache::new(&c, 8);
+        let k = vec![0.0f32; c.k_dim()];
+        let v = vec![0.0f32; c.v_dim()];
+        // Written before queried, as the decode path does — a global layer's
+        // ring grows on write, and the span is clamped to what it holds.
+        for pos in 0..=10 {
+            cache.write_kv(0, pos, &k, &v);
+            cache.write_kv(3, pos, &k, &v);
+        }
         // Layer 0 is local with a window of 4.
         assert_eq!(cache.span(0, 2), (0, 2));
         assert_eq!(cache.span(0, 10), (7, 10));
-        // Layer 3 is global.
+        // Layer 3 is global: it kept everything, so it sees everything.
         assert_eq!(cache.span(3, 10), (0, 10));
     }
 

@@ -396,7 +396,11 @@ impl V3Model {
     }
 
     /// Engram keys and values for every site, `(sites, seq, d_model)` each.
-    fn engram_kv(&self, tokens: &[u32]) -> (Vec<f32>, Vec<f32>) {
+    ///
+    /// With `want_raw`, also returns the **pre**-convolution values, which a
+    /// cache needs to continue the dilated tap convolution from where a
+    /// prefill left off.
+    fn engram_kv_with_raw(&self, tokens: &[u32], want_raw: bool) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         let cfg = &self.cfg;
         let seq = tokens.len();
         let d = cfg.d_model;
@@ -415,6 +419,11 @@ impl V3Model {
         let sites = e.sites.len();
         let mut ks = vec![0.0f32; sites * seq * d];
         let mut vs = vec![0.0f32; sites * seq * d];
+        let mut raw = if want_raw {
+            vec![0.0f32; sites * seq * d]
+        } else {
+            Vec::new()
+        };
         let fetch_dim = dims.num_tables * dims.sub_dim;
         let mut fetched = vec![0.0f32; fetch_dim];
         let mut row = vec![0.0f32; dims.sub_dim];
@@ -436,9 +445,12 @@ impl V3Model {
                 site.value_proj.matvec(&fetched, &mut vs[base..base + d]);
             }
             let off = s * seq * d;
+            if want_raw {
+                raw[off..off + seq * d].copy_from_slice(&vs[off..off + seq * d]);
+            }
             value_conv(&mut vs[off..off + seq * d], &site.taps, seq, &dims);
         }
-        (ks, vs)
+        (ks, vs, raw)
     }
 
     /// Logits for every position, `(seq, logit_rows)` row-major.
@@ -460,12 +472,36 @@ impl V3Model {
         cells
     }
 
-    fn forward_impl(&self, tokens: &[u32], mut cells: Option<&mut Vec<f32>>) -> Vec<f32> {
+    /// Batched prefill that also fills `cache`, so generation can continue
+    /// from it with [`Self::decode_step`].
+    ///
+    /// Returns the logits for the **last** position, which is what a caller
+    /// needs to sample the first new token. This is the path generation should
+    /// use for a prompt: stepping the prompt through `decode_step` costs one
+    /// full pass per position, where this pays the weight traffic once per
+    /// chunk.
+    pub fn prefill(&self, tokens: &[u32], cache: &mut V3Cache) -> Vec<f32> {
+        let rows = self.cfg.logit_rows();
+        let all = self.forward_impl_cached(tokens, None, Some(cache));
+        let last = tokens.len() - 1;
+        all[last * rows..(last + 1) * rows].to_vec()
+    }
+
+    fn forward_impl(&self, tokens: &[u32], cells: Option<&mut Vec<f32>>) -> Vec<f32> {
+        self.forward_impl_cached(tokens, cells, None)
+    }
+
+    fn forward_impl_cached(
+        &self,
+        tokens: &[u32],
+        mut cells: Option<&mut Vec<f32>>,
+        mut cache: Option<&mut V3Cache>,
+    ) -> Vec<f32> {
         let cfg = &self.cfg;
         let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
         let rows = cfg.logit_rows();
         let (rc, rs) = self.rope(seq);
-        let (ek, ev) = self.engram_kv(tokens);
+        let (ek, ev, ev_raw) = self.engram_kv_with_raw(tokens, cache.is_some());
 
         // Lane stream: (seq, lanes, d_model).
         let l1 = cfg.num_layers + 1;
@@ -635,6 +671,16 @@ impl V3Model {
                 );
             }
 
+            // The conv runs in place, so the last few pre-conv vectors have to
+            // be kept if the cache is going to continue from here.
+            let (mut q_raw_tail, mut k_raw_tail, mut v_raw_tail) =
+                (Vec::new(), Vec::new(), Vec::new());
+            if cache.is_some() && cfg.qkv_conv_taps > 0 {
+                let n = cfg.qkv_conv_taps - 1;
+                q_raw_tail = last_rows(&q, seq, q_dim, n);
+                k_raw_tail = last_rows(&k, seq, k_dim, n);
+                v_raw_tail = last_rows(&v, seq, v_dim, n);
+            }
             if cfg.qkv_conv_taps > 0 {
                 causal_depthwise_conv(&mut q, &layer.q_taps, seq, q_dim, cfg.qkv_conv_taps);
                 causal_depthwise_conv(&mut k, &layer.k_taps, seq, k_dim, cfg.qkv_conv_taps);
@@ -658,6 +704,24 @@ impl V3Model {
                 cfg.num_kv_heads,
                 cfg.qk_head_dim,
             );
+
+            if let Some(c) = cache.as_deref_mut() {
+                // Post-conv, post-norm, post-rope keys and values: exactly what
+                // decode_step will attend against when it continues from here.
+                for t in 0..seq {
+                    c.write_kv(
+                        li,
+                        t,
+                        &k[t * k_dim..(t + 1) * k_dim],
+                        &v[t * v_dim..(t + 1) * v_dim],
+                    );
+                }
+                if cfg.qkv_conv_taps > 0 {
+                    c.seed_conv_tail(li, Qkv::Q, &q_raw_tail);
+                    c.seed_conv_tail(li, Qkv::K, &k_raw_tail);
+                    c.seed_conv_tail(li, Qkv::V, &v_raw_tail);
+                }
+            }
 
             attend(&q, &k, &v, dims, cfg.attention_span(li), &mut attn);
 
@@ -754,6 +818,18 @@ impl V3Model {
             }
         }
 
+        if let Some(c) = cache {
+            c.set_pos(seq);
+            c.seed_tokens(tokens);
+            let reach = cfg.engram.conv_taps.saturating_sub(1) * cfg.engram.conv_dilation;
+            if reach > 0 {
+                for s in 0..cfg.engram.sites.len() {
+                    let off = s * seq * d;
+                    c.seed_engram_tail(s, &last_rows(&ev_raw[off..off + seq * d], seq, d, reach));
+                }
+            }
+        }
+
         // Mean over lanes, final norm, then the tied head — batched, because
         // at 8192 x 768 it is a fifth of the whole forward pass.
         let mut logits = vec![0.0f32; seq * rows];
@@ -793,6 +869,19 @@ impl V3Model {
         }
         logits
     }
+}
+
+/// The last `n` rows of a `(seq, dim)` buffer, oldest first, zero-padded at the
+/// front when the sequence is shorter than `n`.
+fn last_rows(buf: &[f32], seq: usize, dim: usize, n: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; n * dim];
+    for j in 0..n.min(seq) {
+        // out is oldest-first, so the newest row lands last.
+        let src = seq - n.min(seq) + j;
+        let dst = n - n.min(seq) + j;
+        out[dst * dim..(dst + 1) * dim].copy_from_slice(&buf[src * dim..(src + 1) * dim]);
+    }
+    out
 }
 
 /// `base^exp` for the RoPE frequency table. `crate::math::powf` exists but is
