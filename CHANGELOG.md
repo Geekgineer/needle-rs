@@ -304,6 +304,8 @@ Initial public release.
 - INT4 matvec 512×512 (AVX2): 83 µs / 3.2 Gelem/s
 - CLI binary: 533 KB stripped; WASM module: 260 KB (`wasm-opt -Oz`)
 
-[Unreleased]: https://github.com/geekgineer/needle-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/geekgineer/needle-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/geekgineer/needle-rs/releases/tag/v0.3.0
+[0.2.1]: https://github.com/geekgineer/needle-rs/releases/tag/v0.2.1
 [0.2.0]: https://github.com/geekgineer/needle-rs/releases/tag/v0.2.0
 [0.1.0]: https://github.com/geekgineer/needle-rs/releases/tag/v0.1.0
