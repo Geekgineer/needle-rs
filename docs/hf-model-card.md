@@ -308,7 +308,7 @@ the runtime. See [Limitations](#limitations).
 
 ## Limitations
 
-- **Tool calling only.** Needle is trained for the single task of mapping a query plus tool definitions to a JSON call. It is not a chat model and will not produce meaningful free-form text.
+- **AI tool calling only.** Needle is trained for the single task of mapping a query plus tool definitions to a JSON call. It is not a chat model and will not produce meaningful free-form text.
 - **Single-shot.** No multi-turn dialogue, no chain-of-thought, no tool-use feedback loop. Each call is independent.
 - **English-trained.** Multilingual behavior is not evaluated by upstream and is not guaranteed.
 - **Greedy decoding only** on the v1 path in `needle-rs` — stochasticity is undesirable for routing, so no sampling is exposed. (`--temperature` and `--seed` exist, but apply to the v3 and v2 paths.)

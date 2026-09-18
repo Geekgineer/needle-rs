@@ -16,7 +16,7 @@
     <circle cx="68" cy="20" r="6" fill="#28C840"/>
     <text x="600" y="25" text-anchor="middle"
           font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace"
-          font-size="12" fill="#7D8590">needle-rs — local tool calling, no server</text>
+          font-size="12" fill="#7D8590">needle-rs — local AI tool calling, no server</text>
   </g>
   <rect width="1200" height="516" rx="12" fill="none" stroke="#21262D" stroke-width="1"/>
 

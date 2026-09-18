@@ -48,7 +48,7 @@ A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute
   <img src="https://img.shields.io/badge/-Why_this_matters-CE422B?style=flat-square" height="22" alt="Why this matters"/>
 </h2>
 
-Tool calling usually means a paid API round-trip or hundreds of megabytes on disk. This ships the whole agent in **14 MB** with Needle 2, or 36 MB with Needle 3, and runs it in a browser tab.
+AI tool calling usually means a paid API round-trip or hundreds of megabytes on disk. This ships the whole agent in **14 MB** with Needle 2, or 36 MB with Needle 3, and runs it in a browser tab.
 
 <table>
 <thead>
