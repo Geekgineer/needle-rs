@@ -24,11 +24,11 @@ Arguments:
 
 Options:
   --stream            Print each token to stderr as generated; result to stdout
-  --max-tokens <N>    Generation cap (v2 only, default 128)
-  --temperature <T>   0 for greedy, higher to sample (v2 only, default 0)
-  --seed <N>          Sampling seed (v2 only, default 0)
-  --system <TEXT>     System message (v2 only)
-  --json              Print only the tool-call payload, not the full text (v2 only)
+  --max-tokens <N>    Generation cap (v3 default 256, v2 default 128)
+  --temperature <T>   0 for greedy, higher to sample (v3, v2; default 0)
+  --seed <N>          Sampling seed (v3, v2; default 0)
+  --system <TEXT>     System message (v3, v2)
+  --json              Print only the tool-call payload, not the full text (v3, v2)
   --constrain         Restrict the tool-call payload to the declared schema (v3, v2)
   --kv-int8           Store the KV cache as int8: ~1/4 the memory (v3)
   --prefill-chunk <N> Positions per batched-prefill chunk; 0 prefills one at a

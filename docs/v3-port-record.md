@@ -73,7 +73,7 @@ workspace; `clippy --all-targets -D warnings` clean.
 - **KV cache** — incremental decode is bit-identical to prefill (0.000e0), and
   sized to the session: 1.2 MB for a 57-token run against 14.4 MB if every
   window were reserved.
-- **Batched prefill and threading** — 507ms to 235ms over 57 positions, 2.16x,
+- **Batched prefill and threading** — 477ms to 238ms over 57 positions, 2.00x,
   bit-identical because `matmul_rows_prepared` matches repeated matvecs exactly.
 - **Confidence head** — 2e-6 against the reference. Cells checked first.
 - **Constrained decoding** — the JSON state machine over the v3 token table,

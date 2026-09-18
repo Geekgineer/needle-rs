@@ -10,7 +10,7 @@ details (training, hyperparameters, research decisions), see the
 
 ```
 crates/
-  needle-core/    no_std compute kernels (v1 and v2)
+  needle-core/    no_std compute kernels (v1, v2 and v3)
   needle-infer/   std inference engine: loaders, tokenizers, engines
   needle-c/       C ABI cdylib + staticlib
   needle-wasm/    WASM bindings (wasm-bindgen)
@@ -346,8 +346,8 @@ the engine to JavaScript. Key constraints vs. native:
 - `wasm-opt = false` in Cargo.toml (disables wasm-pack's bundled optimizer); CI runs `wasm-opt -Oz` via system binaryen instead
 - SIMD: the portable kernel is used for wasm32 (no SIMD128 path yet)
 
-One module exports both `NeedleWasm` (v1) and `NeedleV2Wasm` (v2): **529 KB**
-after `wasm-opt -Oz`, 160 KB over the wire.
+One module exports `NeedleWasm` (v1), `NeedleV2Wasm` (v2) and `NeedleV3Wasm`
+(v3): **537 KB** after `wasm-opt -Oz`, 162 KB over the wire at `brotli -q 11`.
 
 ```bash
 wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/

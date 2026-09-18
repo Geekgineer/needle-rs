@@ -12,7 +12,7 @@
     <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/release.yml/badge.svg" alt="Release"/></a>
     <a href="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml"><img src="https://github.com/Geekgineer/needle-rs/actions/workflows/wasm-demo.yml/badge.svg?branch=main" alt="Demo"/></a>
     <a href="#parity"><img src="https://img.shields.io/badge/parity-token--exact-brightgreen?style=flat-square" alt="Token-exact parity"/></a>
-    <a href="#quick-start"><img src="https://img.shields.io/badge/Needle-v1%20%2B%20v2-CE422B?style=flat-square" alt="Needle v1 and v2"/></a>
+    <a href="#quick-start"><img src="https://img.shields.io/badge/Needle-v1%20%2B%20v2%20%2B%20v3-CE422B?style=flat-square" alt="Needle v1, v2 and v3"/></a>
     <a href="https://crates.io/crates/needle-infer"><img src="https://img.shields.io/crates/v/needle-infer?style=flat-square&color=CE422B" alt="crates.io"/></a>
     <a href="https://www.npmjs.com/package/needle-rs"><img src="https://img.shields.io/npm/v/needle-rs?style=flat-square&color=CE422B" alt="npm"/></a>
     <a href="https://pypi.org/project/needle-rs/"><img src="https://img.shields.io/pypi/v/needle-rs?style=flat-square&color=CE422B" alt="PyPI"/></a>
@@ -58,12 +58,12 @@ Tool calling usually means a paid API round-trip or hundreds of megabytes on dis
 <tr><td>Hosted function calling</td><td align="right">SDK + API</td><td align="right">$ per token</td><td align="center">leaves device</td><td align="center">✗</td></tr>
 <tr><td>llama.cpp + a 1B local model</td><td align="right">700 MB+</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 <tr><td>ONNX Runtime Web + a model</td><td align="right">8 MB + model</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
-<tr><td><b><code>needle-rs</code> + Needle 3</b></td><td align="right"><b>529 KB + 35.3 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
-<tr><td><code>needle-rs</code> + Needle 2 <sub>(smallest)</sub></td><td align="right">529 KB + 13.7 MB</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
+<tr><td><b><code>needle-rs</code> + Needle 3</b></td><td align="right"><b>537 KB + 35.3 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
+<tr><td><code>needle-rs</code> + Needle 2 <sub>(smallest)</sub></td><td align="right">537 KB + 13.7 MB</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 </tbody>
 </table>
 
-The runtime is 529 KB of WebAssembly (160 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; Needle 3 is larger and heavier — see [choosing a generation](#generations).
+The runtime is 537 KB of WebAssembly (162 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; a Needle 3 session adds 8.8 MB of key/value cache at 512 tokens, or 2.3 MB with `--kv-int8` — see [choosing a generation](#generations).
 
 <br/>
 
@@ -230,7 +230,7 @@ Every example in [`examples/`](examples/) runs on both.
 <table>
 <thead><tr><th align="left">Target</th><th align="center">Status</th><th align="right">Binary</th></tr></thead>
 <tbody>
-<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>529 KB</code> <sub>160 KB over the wire</sub></td></tr>
+<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>537 KB</code> <sub>162 KB over the wire</sub></td></tr>
 <tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>601 KB</code></td></tr>
 <tr><td>Python <sub>(abi3 wheel, CPython ≥ 3.8)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
 <tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v3_*</code> + <code>needle_v2_*</code> + <code>needle_*</code></td></tr>
@@ -329,7 +329,7 @@ Full methodology — including the optimisations that were measured and **reject
 
 - **In-browser agents.** Route a user's sentence to one of your app's functions with no backend. See [`examples/browser-demo`](examples/browser-demo) and the [live demo](https://needle-rs.pages.dev).
 - **Dynamic tool sets.** Generate tools from live state each turn and let the model pick — [`examples/dom-editor`](examples/dom-editor) rewrites a page from plain English.
-- **Edge workers.** 529 KB of WASM fits inside a Cloudflare Worker.
+- **Edge workers.** 537 KB of WASM fits inside a Cloudflare Worker.
 - **Large tool catalogues.** Narrow hundreds of tools with the retrieval head before the call.
 - **Uncertainty-aware routing.** Use the confidence head to escalate to a larger model only when needed.
 - **Offline and embedded.** `no_std` kernels, one dependency, no allocator assumptions beyond `alloc`.

@@ -54,7 +54,7 @@ first:
 # from the repo root
 wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
-  pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm   # optional: 462 -> 529 KB
+  pkg/needle_wasm_bg.wasm -o pkg/needle_wasm_bg.wasm   # optional: 605 -> 537 KB
 
 cd examples/dom-editor
 npm install

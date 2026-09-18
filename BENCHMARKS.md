@@ -23,10 +23,12 @@ code lives in `crates/needle-core/benches/` and `crates/needle-infer/tests/`.
 | OS | macOS 26.0.1 |
 | Rust | 1.95.0 stable, `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
 
-### aarch64 (NEON) — v2 numbers
+### aarch64 (NEON) — v2 and v3 numbers
 
-Every figure in the *Needle v2* section below was measured on this machine, which
-is **not** the one above. v1 and v2 numbers are not comparable across the two.
+Every figure in the *Needle v3* and *Needle v2* sections below was measured on
+this machine, which is **not** the one above. v1 numbers are not comparable with
+either. The v3 figures were taken on macOS 27.0; the v2 figures predate that
+upgrade.
 
 | Field | Value |
 |---|---|
@@ -34,6 +36,68 @@ is **not** the one above. v1 and v2 numbers are not comparable across the two.
 | Memory | 64 GB unified |
 | OS | macOS 26.6.2 |
 | Rust | 1.97.1 stable, `opt-level=3`, `lto="fat"`, `codegen-units=1`, `panic="abort"` |
+
+---
+
+## Needle v3 (`.cact`, `Cactus-Compute/needle3`)
+
+Measured on the **M5 Max** entry above (macOS 27.0), built with
+`--features parallel` — which is what the CLI, Python and C crates enable, so it
+is what a user actually runs. Model: `needle3.cact`, 35,335,380 bytes, d_model
+768, 20 layers, 12 query / 2 KV heads with asymmetric head dims (qk 48, v 64),
+vocab 8192, context 8192, `sliding_window` 1024 with global attention at layers
+4/9/14/19, Engram at five sites.
+
+```
+cargo run --release -p needle-infer --features parallel --example v3_bench
+```
+
+### Against v2, same machine, same build flags
+
+| Phase | v3 | v2 | |
+|---|---|---|---|
+| Load model | **10 ms** | 9 ms | |
+| Prefill, per token | 4.20 ms | **1.46 ms** | 0.35x |
+| Decode, per token | 8.65 ms | **7.05 ms** | 0.82x |
+
+v3 carries 121M parameters against v2's 45M. Being 2–3x slower per token for
+2.7x the weights is the trade, and it is the whole reason both generations stay
+in the tree: v2 is not deprecated by v3, it is the faster, smaller option.
+
+A 100-token prompt answers in about 700 ms end to end, 424 ms of which is time
+to first token.
+
+### Threading helps v3's prefill, not its decode
+
+| Phase | serial | `--features parallel` | |
+|---|---|---|---|
+| Prefill, per token | 7.61 ms | **4.20 ms** | 1.81x |
+| Decode, per token | 9.48 ms | **8.65 ms** | 1.10x |
+
+The same finding v2 reached, more pronounced: prefill has whole matrices to
+split, while a decode step is a single-position matvec too small to pay the
+dispatch. Batching prefill rather than stepping it is worth a further 1.19x
+(`v3_forward_parity` prints it), and is bit-identical.
+
+### The key/value cache
+
+v3's cache is large enough to be a deployment decision rather than a footnote —
+4 global layers hold the full context while 16 local layers hold a 1024-token
+window.
+
+| Session | f32 | int8 |
+|---|---|---|
+| 512 tokens | 8.8 MB | **2.3 MB** |
+| 2048 tokens | 21.0 MB | **5.6 MB** |
+| 8192 tokens (full context) | 42.0 MB | **11.2 MB** |
+
+int8 is the width the container declares in `kv_bits`, quantised exactly as
+upstream's `a8_fake_quant_kv` does. It is 27% of f32 rather than 25% because
+each stored head vector carries its own `f32` scale, and it costs about 2% of
+speed — prefill 4.29 against 4.20 ms/token, decode 8.72 against 8.65 — so it is
+very close to a free 3.7x on the dominant memory cost. Opt-in via `--kv-int8`;
+see [docs/v3-port-record.md](docs/v3-port-record.md) for what it does and does
+not preserve.
 
 ---
 
@@ -69,7 +133,7 @@ single query time says little on its own. Reference figures are from
 `tools/cact_params.py` feeding `decode.forward_cached` — same machine, same
 weights, JIT already warm.
 
-| Phase | needle-rs 0.2.0 | Python / JAX | |
+| Phase | needle-rs | Python / JAX | |
 |---|---|---|---|
 | Load model | **9 ms** | 761 ms (params) + 26.5 s first-call JIT | **~50x** |
 | Prefill, per token | 1.60 ms | **0.51 ms** | 0.32x |
@@ -296,20 +360,24 @@ Measured with `cargo bench -p needle-core -- matvec`.
 
 ## Binary / Deployment Size
 
-One binary carries both engines: there is no v1-only or v2-only build. Code
-sizes below are macOS/aarch64 (Apple M4 Max, `lto="fat"`); a Linux/x86_64 build
-of the same tree comes out smaller, so treat these as the upper bound.
+One binary carries all three engines: there is no v1-only, v2-only or v3-only
+build. Code sizes below are macOS/aarch64 (`lto="fat"`); a Linux/x86_64 build of
+the same tree comes out smaller, so treat these as the upper bound.
+
+Re-measured for 0.3.0 on the M5 Max entry, with all three generations compiled
+in. Every figure grew when v3 landed; the earlier numbers in this table were for
+a two-generation build on an M4 Max and are not comparable.
 
 | Artifact | Size | Notes |
 |---|---|---|
-| CLI binary (`needle-rs`) | **668 KB** | stripped release, both engines |
-| C shared library (`libneedle_c.dylib`) | **702 KB** | cdylib, stable C ABI, both surfaces |
-| WASM module (`needle_wasm_bg.wasm`) | **529 KB** | after `wasm-opt -Oz`; **156 KB** over the wire as Cloudflare Pages serves it (brotli), 202 KB gzipped, 160 KB at `brotli -q 11` |
-| — same module, unoptimised | 462 KB | what `wasm-pack build` alone emits |
+| CLI binary (`needle-rs`) | **765 KB** | stripped release, all three engines |
+| C shared library (`libneedle_c.dylib`) | **815 KB** | cdylib, stable C ABI, all three surfaces |
+| WASM module (`needle_wasm_bg.wasm`) | **537 KB** | after `wasm-opt -Oz`; **162 KB** at `brotli -q 11`, 205 KB gzipped |
+| — same module, unoptimised | 605 KB | what `wasm-pack build` alone emits |
 
 `wasm-opt` is **not** run by `wasm-pack` here — the crate sets
 `wasm-opt = false`, because the binary wasm-pack downloads fails in this build
-environment. Run it yourself for the 529 KB figure:
+environment. Run it yourself for the 537 KB figure:
 
 ```bash
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
@@ -320,12 +388,15 @@ Weights, per version:
 
 | Version | Files | Size |
 |---|---|---|
+| v3 | `needle3.cact` (weights + geometry + tokenizer) | **35.3 MB** |
 | v2 | `needle2.cact` (weights + geometry + tokenizer) | **13.7 MB** |
 | v1 | `needle.safetensors` + `vocab.txt` | **22 MB** + 122 KB |
 
-Smallest complete browser deployment is v2: 529 KB of runtime plus a 13.7 MB
-container, 156 KB + 13.7 MB over the wire with brotli. A generation session needs
-roughly 23 MB of working memory on top (see [Memory](#memory)).
+Smallest complete browser deployment is still v2: 537 KB of runtime plus a
+13.7 MB container, 162 KB + 13.7 MB over the wire with brotli. A generation
+session needs roughly 23 MB of working memory on top (see [Memory](#memory)).
+v3 is the same runtime with a 35.3 MB container and a larger cache — see the
+Needle v3 section.
 
 ---
 
@@ -340,7 +411,7 @@ roughly 23 MB of working memory on top (see [Memory](#memory)).
 On disk: the CPU-only virtualenv used to generate the parity fixtures here
 (`jax`, `flax`, `numpy` and their transitive deps, Python 3.12) measures
 **479 MB**, of which `jaxlib` alone is 268 MB. A CUDA build is several times
-that. The equivalent needle-rs deployment is a 668 KB binary, or 529 KB of
+that. The equivalent needle-rs deployment is a 765 KB binary, or 537 KB of
 WebAssembly.
 
 ---

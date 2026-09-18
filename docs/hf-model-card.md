@@ -11,14 +11,15 @@
    (`https://huggingface.co/Cactus-Compute/needle` — checked, returns 200 as of 2026-08-20).
    If they ever rename or move the repo, update `base_model:` below before publishing.
    **These weights convert Needle v1.** Upstream has since released v2 at
-   `Cactus-Compute/needle2`, a different architecture in a different container
-   (see `docs/v2-port-record.md`). Both repos resolve; keep `base_model:` on
-   `needle` so the card is not mistaken for a v2 conversion.
-   Note that **v2 needs no conversion repo at all** — needle-rs reads upstream's
-   own `.cact` container directly, so there is nothing to host and nothing to
-   keep in sync. This repository exists only because v1 shipped as a Flax
-   checkpoint. Say so on the card rather than letting readers assume a v2
-   equivalent is missing.
+   `Cactus-Compute/needle2` and v3 at `Cactus-Compute/needle3`, each a different
+   architecture in a different container (see `docs/v2-port-record.md` and
+   `docs/v3-port-record.md`). All three repos resolve; keep `base_model:` on
+   `needle` so the card is not mistaken for a v2 or v3 conversion.
+   Note that **neither v2 nor v3 needs a conversion repo at all** — needle-rs
+   reads upstream's own `.cact` containers directly, so there is nothing to host
+   and nothing to keep in sync. This repository exists only because v1 shipped
+   as a Flax checkpoint. Say so on the card rather than letting readers assume a
+   v2 or v3 equivalent is missing.
 3. `inference: false` is correct — there is no HF Inference-compatible adapter.
 4. `library_name: needle-rs` is not a registered HF library; HF will display it as-is.
    That is fine — it links users to the runtime.
@@ -74,14 +75,15 @@ inference: false
 >
 > If you build with these weights, you are building on Cactus's Needle. Please credit them in any publication, blog post, product, or downstream model that incorporates this work. Citation template below.
 
-> **Which Needle is this?** Needle **v1** — the encoder-decoder SAN. Upstream's current release is **v2** ([`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)), a decoder-only architecture with mHC lanes, Engram memory, HadamardMLP blocks, and Cactus-Quants weights in a `.cact` container. v2 shares no weight tensors with v1, so these files are not interchangeable with it.
+> **Which Needle is this?** Needle **v1** — the encoder-decoder SAN. Upstream's current release is **v3** ([`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3)), preceded by **v2** ([`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)). Both are decoder-only architectures with mHC lanes, Engram memory, HadamardMLP blocks and Cactus-Quants weights in a `.cact` container; v3 adds hybrid local/global attention, a causal convolution over Q/K/V and a reasoning step. Neither shares weight tensors with v1, so these files are not interchangeable with either.
 >
-> **If you want v2, you do not need this repository.** needle-rs 0.2.0 runs v2 from upstream's own container, verified token-exact against the JAX reference — download `needle2.cact` straight from [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2). These converted files exist because v1 shipped as a Flax checkpoint that no Rust runtime could read; v2 needed no such conversion. The same binary loads either.
+> **If you want v2 or v3, you do not need this repository.** needle-rs runs both from upstream's own containers, verified token-exact against the JAX reference — download `needle2.cact` from [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2) or `needle3.cact` from [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3). These converted files exist because v1 shipped as a Flax checkpoint that no Rust runtime could read; v2 and v3 needed no such conversion. The same binary loads any of the three.
 
 ## Quick links
 
 - **Original model (v1, what these files convert):** [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle) — upstream weights, training code, paper
-- **Upstream's current release (v2, a different architecture):** [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)
+- **Upstream's current release (v3, a different architecture):** [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3)
+- **Upstream v2 (also a different architecture):** [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)
 - **Runtime:** [`geekgineer/needle-rs`](https://github.com/geekgineer/needle-rs) — Rust, WASM, C ABI
 - **Live demo:** [needle-rs.pages.dev](https://needle-rs.pages.dev) — runs entirely in your browser
 - **Weight format spec:** [ARCHITECTURE.md](https://github.com/geekgineer/needle-rs/blob/main/ARCHITECTURE.md)
@@ -247,7 +249,7 @@ Needle is trained to pick the right tool from a list, not just fill a single too
 - **Tool calling only.** Needle is trained for the single task of mapping a query plus tool definitions to a JSON call. It is not a chat model and will not produce meaningful free-form text.
 - **Single-shot.** No multi-turn dialogue, no chain-of-thought, no tool-use feedback loop. Each call is independent.
 - **English-trained.** Multilingual behavior is not evaluated by upstream and is not guaranteed.
-- **Greedy decoding only** for v1 in `needle-rs` — stochasticity is undesirable for routing, and v1 exposes no sampling path. (The runtime's v2 engine does support temperature, seeding and schema-constrained decoding; that applies to `.cact` weights, not to these files.)
+- **Greedy decoding only** for v1 in `needle-rs` — stochasticity is undesirable for routing, and v1 exposes no sampling path. (The runtime's v2 and v3 engines do support temperature, seeding and schema-constrained decoding; that applies to `.cact` weights, not to these files.)
 - **Encoder length ≤ 1,024 tokens.** Long tool catalogues must be pre-filtered via contrastive retrieval before being passed in.
 - **Small-model failure modes apply.** Ambiguous queries, tools with overlapping descriptions, or unusual parameter schemas can produce unexpected routings. The constrained decoder guarantees syntactic validity, not semantic correctness.
 
@@ -272,7 +274,7 @@ If you publish or distribute work that uses these weights, please cite **the ups
 }
 ```
 
-If your work uses Needle **v2** instead, cite the entry Cactus asks for, reproduced verbatim from their README. The design and ablations are in [arXiv:2607.18363](https://arxiv.org/abs/2607.18363):
+If your work uses Needle **v2 or v3** instead, cite the entry Cactus asks for, reproduced verbatim from their README. The design and ablations are in [arXiv:2607.18363](https://arxiv.org/abs/2607.18363):
 
 ```bibtex
 @misc{needle2_2026,

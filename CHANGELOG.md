@@ -32,7 +32,10 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 - **KV cache** — incremental decode is *bit-identical* to prefill, not merely
   close. Sized to the session rather than to the windows: 1.2 MB for a
   57-token run where reserving every window would cost 14.4 MB.
-- **Batched prefill and threading** — 2.16x, bit-identical.
+- **Batched prefill and threading** — 2.00x together over 57 positions
+  (477 ms stepped and serial, 238 ms batched and threaded), bit-identical.
+  Batching alone is 1.19x; the rest is threading, which helps prefill and not
+  decode.
 - **Confidence head** — matches the reference to 2e-6.
 - **Constrained decoding** over the v3 token table, engaged only inside
   `<tool_call>`.
@@ -63,7 +66,7 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
   matters because pretty-printed schemas change the model's answer.
 - `silu`, `rms_unit`, `rms_unit_to` and `sinkhorn` moved to a shared layer.
   v2 keeps its import paths through re-exports.
-- The WASM module is **529 KB** with three engines (160 KB over the wire),
+- The WASM module is **537 KB** with three engines (162 KB over the wire),
   against 413 KB with two. That is the cost of carrying v1, v2 and v3 in one
   module.
 

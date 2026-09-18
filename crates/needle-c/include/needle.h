@@ -345,7 +345,7 @@ void needle_v2_free(NeedleV2Handle *handle);
 
 /**
  * Free a string returned by any needle_* or needle_v2_* call that returns
- * char* (shared by both surfaces). Safe to call with NULL.
+ * char* (shared by all three surfaces). Safe to call with NULL.
  */
 void needle_free_str(char *s);
 
@@ -466,7 +466,7 @@ void needle_v3_free(NeedleV3Handle *handle);
 
 /**
  * Return the last error message as a null-terminated C string, or NULL if none.
- * Shared by both surfaces.
+ * Shared by all three surfaces.
  *
  * The returned pointer is valid until the next call to any needle_* function
  * on the current thread. Do NOT free this pointer.

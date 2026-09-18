@@ -13,11 +13,11 @@ wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
 wasm-pack build crates/needle-wasm --target nodejs --release --out-dir ../../pkg-nodejs/
 ```
 
-Output: `pkg/needle_wasm_bg.wasm` (462 KB) + `pkg/needle_wasm.js` (28 KB of glue).
+Output: `pkg/needle_wasm_bg.wasm` (605 KB) + `pkg/needle_wasm.js` (39 KB of glue).
 
 `wasm-pack` does **not** run `wasm-opt` here — the crate sets
 `wasm-opt = false`, because the binary wasm-pack downloads fails in this build
-environment. Run it yourself to get the published 529 KB module:
+environment. Run it yourself to get the published 537 KB module:
 
 ```bash
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
@@ -28,18 +28,96 @@ That is 202 KB gzipped and 156 KB as Cloudflare Pages serves it (brotli);
 `brotli -q 11` gets it to 131 KB. Serve it compressed — it is the single
 biggest win available, larger than anything `-Oz` does.
 
-## One module, both model generations
+## One module, three model generations
 
-| | Needle v2 | Needle v1 |
-|---|---|---|
-| Class | `NeedleV2Wasm` | `NeedleWasm` |
-| `load` | `load(cactBytes)` | `load(weightsBytes, vocabText)` |
-| Assets | one `.cact` file | `.safetensors` + vocab text |
-| Extra methods | `run_json`, `generate`, `confidence_for` | `run_batch` |
-| Probe heads | contrastive + confidence | contrastive |
+| | Needle v3 | Needle v2 | Needle v1 |
+|---|---|---|---|
+| Class | `NeedleV3Wasm` | `NeedleV2Wasm` | `NeedleWasm` |
+| `load` | `load(cactBytes)` | `load(cactBytes)` | `load(weightsBytes, vocabText)` |
+| Assets | one `.cact` file (35.3 MB) | one `.cact` file (13.7 MB) | `.safetensors` + vocab text |
+| Extra methods | `run_json`, `generate`, `reasoning`, `confidence_for`, `kv_bytes` | `run_json`, `generate`, `confidence_for` | `run_batch` |
+| Probe heads | confidence | contrastive + confidence | contrastive |
+| Context | 8192 | 2048 | 1024 |
 
-Both classes are exported from the same module and can be instantiated side by
-side. Pick per deployment; nothing forces a build-time choice.
+All three classes are exported from the same module and can be instantiated side
+by side. Pick per deployment; nothing forces a build-time choice.
+
+v2 and v3 both use `.cact`. A container states its generation in its first word,
+so `NeedleV3Wasm.load` on a v2 container returns `undefined` rather than
+misreading the header.
+
+---
+
+## Needle v3 in a web page (no bundler)
+
+```html
+<script type="module">
+  import init, { NeedleV3Wasm } from "./pkg/needle_wasm.js";
+
+  await init();
+  const cact = new Uint8Array(
+    await (await fetch("./needle3.cact")).arrayBuffer()
+  );
+  const model = NeedleV3Wasm.load(cact);
+  if (!model) throw new Error("not a Needle 3 container");
+
+  const tools = JSON.stringify([{
+    name: "get_weather",
+    description: "Get current weather for a city",
+    parameters: {
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+    },
+  }]);
+
+  // v3 reasons first, so `run` returns a <think> block then the call.
+  const text = model.run("What's the weather in Paris?", tools);
+  console.log(model.reasoning(text));   // the chain-of-thought, or undefined
+  console.log(model.run_json("What's the weather in Paris?", tools));
+  // -> [{"name":"get_weather","arguments":{"city":"Paris"}}]
+</script>
+```
+
+`run_json` returns `"[]"` when the model considered the tools and declined, and
+`""` when it emitted no `<tool_call>` markers at all. Treating the first as a
+failure turns a considered "no" into an error.
+
+### Budgeting memory in a tab
+
+A browser tab has a memory budget and v3's container is 35 MB, so the cache cost
+is worth asking about before committing to a session length:
+
+```js
+model.kv_bytes(512);        //  8.8 MB  — f32 cache
+model.kv_bytes_int8(512);   //  2.3 MB  — 8-bit cache
+model.max_seq_len();        //  8192
+```
+
+Pass `kv_int8 = true` as the last argument to `generate` to use the 8-bit cache.
+It is the width the container declares, costs about 2% of the speed, and on our
+tests produces identical tool calls — but it is not bit-identical to the
+default, so it stays opt-in:
+
+```js
+const out = model.generate(query, tools, 0, 0.0, 0, /*constrain*/ false,
+                           /*kv_int8*/ true);
+```
+
+### Confidence scores the completion, not the query
+
+```js
+const completion = model.run(query, tools);
+const p = model.confidence_for(query, tools, completion);
+```
+
+Pass the **completion**. The head scores a finished judgement: a correct call
+scores 0.94, a wrong one 0.26, and a bare query 0.80 — which looks like a
+confident answer and is not one. v2's head collapsed to near zero on a bare
+query, so the misuse announced itself; v3's does not.
+
+There is no `retrieve_tools` on `NeedleV3Wasm`: v3 exports a confidence head and
+nothing else, so the method is absent rather than present-and-always-empty.
 
 ---
 
@@ -238,9 +316,14 @@ so treat the load as recoverable and keep it inside the guard.
 - A v2 engine needs roughly 23 MB of WASM linear memory: the container's
   weights plus a KV cache sized to the 256-token attention window, not to
   `max_seq_len`. See the KV-ring note in [ARCHITECTURE.md](../ARCHITECTURE.md).
+- A v3 engine is heavier: 35.3 MB of container plus a cache that grows with the
+  session — 8.8 MB at 512 tokens and 42.0 MB at the full 8192, or 2.3 MB and
+  11.2 MB with `kv_int8`. Ask `kv_bytes`/`kv_bytes_int8` rather than guessing;
+  v3's four global layers hold the whole context while its sixteen local layers
+  hold a 1024-token window, so the cost is not linear in the obvious way.
 - WASM linear memory never shrinks. Plan for one engine per tab or per isolate,
   and reuse the handle rather than reloading.
-- Both classes run single-threaded in WASM. The `parallel` feature is native
+- All three classes run single-threaded in WASM. The `parallel` feature is native
   only; without `SharedArrayBuffer` there is nothing to parallelise onto, and
   that is the expected case in a browser.
 - wasm32 addresses 4 GB, so headroom is not the constraint — download time is.
