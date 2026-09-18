@@ -24,6 +24,24 @@
 4. `library_name: needle-rs` is not a registered HF library; HF will display it as-is.
    That is fine — it links users to the runtime.
 
+## The live card can be ahead of this file
+
+**Pull the published card before editing it.** This copy has drifted behind the
+live one before: on the 0.3.0 update the HF page had a clearer title, a
+`needle-v1` tag and a "Looking for Needle v2?" callout that this file did not,
+so pasting this file over it would have deleted all three. The published page is
+the authority; this file is a working copy that is only trustworthy just after a
+sync.
+
+```bash
+curl -sL https://huggingface.co/Abdalrahman/needle-rs-safetensors/raw/main/README.md \
+  -o /tmp/live.md
+diff /tmp/live.md <(sed -n '/^---$/,$p' docs/hf-model-card.md)   # reconcile before editing
+```
+
+Edit the live copy, upload it, then sync this file back to exactly what was
+published.
+
 ## Paste below into HF README.md
 
 Copy from the `---` that begins `license: mit` — **not** the horizontal rule
@@ -33,7 +51,6 @@ above it; a stray rule or blank line there makes HF render the block as text
 instead of parsing it.
 
 ---
-
 ---
 license: mit
 language:
@@ -51,6 +68,7 @@ tags:
   - int4
   - safetensors
   - no-server
+  - needle-v1
 pipeline_tag: text-generation
 base_model: Cactus-Compute/needle
 base_model_relation: quantized
@@ -71,34 +89,64 @@ inference: false
 
 </div>
 
-# needle-rs-safetensors
+# needle-rs-safetensors — Needle **v1** weights
 
-**INT4-packed SafeTensors weights for [Needle](https://github.com/cactus-compute/needle), ready to load into the [needle-rs](https://github.com/Geekgineer/needle-rs) pure-Rust + WebAssembly runtime.**
+**INT4-packed SafeTensors weights for [Needle v1](https://github.com/cactus-compute/needle) — 26M parameters, encoder–decoder — ready to load into the [needle-rs](https://github.com/Geekgineer/needle-rs) pure-Rust + WebAssembly runtime.**
 
-> **This is a format conversion.** The model itself — its architecture, training procedure, dataset, and original weights — is the work of [**Cactus Compute**](https://github.com/cactus-compute) (Henry Ndubuaku et al., 2026), released under MIT. Original repository: [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle).
+> ### Looking for Needle 3 or Needle 2?
+> **`needle-rs` runs all three generations.** Neither newer generation needs a
+> conversion, and neither is hosted here — point the runtime straight at
+> upstream's containers. This repository exists only because **v1** shipped as
+> Flax/Pickle, which no Rust runtime can load.
+>
+> | | Weights | Loader |
+> |---|---|---|
+> | **v3** (121M, decoder-only, reasons first) | [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3) — `needle3.cact` | `V3Engine` / `NeedleV3Wasm` |
+> | **v2** (45M, decoder-only) | [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2) — `needle2.cact` | `V2Engine` / `NeedleV2Wasm` |
+> | **v1** (26M, encoder–decoder) | **this repo** — `needle.safetensors` + `vocab.txt` | `NeedleEngine` / `NeedleWasm` |
+>
+> All three run in the [live demo](https://needle-rs.pages.dev) — switch generation in the browser.
+
+> **This is a format conversion.** The model itself — its architecture, training procedure, dataset, and original weights — is the work of [**Cactus Compute**](https://github.com/cactus-compute) (Henry Ndubuaku et al., 2026). The Needle 1 weights converted here are MIT, as is Needle 2; the upstream repository and the Needle 3 weights are Apache-2.0. Original repository: [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle).
 >
 > If you build with these weights, you are building on Cactus's Needle. Please credit them in any publication, blog post, product, or downstream model that incorporates this work. Citation template below.
 
-> **Which Needle is this?** Needle **v1** — the encoder-decoder SAN. Upstream's current release is **v3** ([`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3)), preceded by **v2** ([`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)). Both are decoder-only architectures with mHC lanes, Engram memory, HadamardMLP blocks and Cactus-Quants weights in a `.cact` container; v3 adds hybrid local/global attention, a causal convolution over Q/K/V and a reasoning step. Neither shares weight tensors with v1, so these files are not interchangeable with either.
->
-> **If you want v2 or v3, you do not need this repository.** needle-rs runs both from upstream's own containers, verified token-exact against the JAX reference — download `needle2.cact` from [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2) or `needle3.cact` from [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3). These converted files exist because v1 shipped as a Flax checkpoint that no Rust runtime could read; v2 and v3 needed no such conversion. The same binary loads any of the three.
-
 ## Quick links
 
-- **Original model (v1, what these files convert):** [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle) — upstream weights, training code, paper
-- **Upstream's current release (v3, a different architecture):** [`Cactus-Compute/needle3`](https://huggingface.co/Cactus-Compute/needle3)
-- **Upstream v2 (also a different architecture):** [`Cactus-Compute/needle2`](https://huggingface.co/Cactus-Compute/needle2)
+- **Original model:** [`Cactus-Compute/needle`](https://huggingface.co/Cactus-Compute/needle) — upstream weights, training code, paper
 - **Runtime:** [`geekgineer/needle-rs`](https://github.com/geekgineer/needle-rs) — Rust, WASM, C ABI
 - **Live demo:** [needle-rs.pages.dev](https://needle-rs.pages.dev) — runs entirely in your browser
 - **Weight format spec:** [ARCHITECTURE.md](https://github.com/geekgineer/needle-rs/blob/main/ARCHITECTURE.md)
+
+## Running Needle 3 or Needle 2 instead
+
+`needle-rs` >= 0.3.0 reads upstream's `.cact` containers directly — one runtime,
+all three generations:
+
+```bash
+hf download Cactus-Compute/needle3 needle3.cact --local-dir weights/
+
+needle-rs --json weights/needle3.cact "What's the weather in Paris?" \
+  '[{"name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}}]'
+# → [{"name":"get_weather","arguments":{"location":"Paris"}}]
+```
+
+One runtime, three generations — `NeedleEngine` / `NeedleWasm` for v1 here,
+`V2Engine` / `NeedleV2Wasm` for v2, and `V3Engine` / `NeedleV3Wasm` for v3.
+**Needle 3 is upstream's current release** and where development continues:
+121M parameters, an 8192-token context, and a `<think>` reasoning step before
+the call. Prefer it for new work. Needle 2 remains the smallest viable browser
+deployment, and these v1 weights are for when you specifically want the
+smallest model.
 
 ## Files
 
 | File | Size | Description |
 |---|---|---|
-| `needle.safetensors` | 22 MB | INT4-packed attention/FFN weights + BF16 norms |
-| `vocab.txt` | 120 KB | 8,192 SentencePiece pieces (TSV: `piece\tscore`) |
-| `banner.svg` | 5 KB | Repo banner |
+| `needle.safetensors` | 22.3 MB | INT4-packed attention/FFN weights + BF16 norms |
+| `vocab.txt` | 122 kB | 8,192 SentencePiece pieces (TSV: `piece\tscore`) |
+| `config.json` | 320 B | Geometry, for tooling that expects a config file |
+| `banner.svg` | 5.3 kB | Repo banner |
 
 ## Model summary
 
@@ -122,7 +170,7 @@ The SafeTensors file uses a custom `I4` dtype for quantized kernels:
 
 - **Group-wise INT4** with `group_size=32`, per-group scale = `max|w| / 7`, packed as nibbles (low nibble = even row, high nibble = odd row, per output column).
 - **Non-kernel parameters** (RMSNorm γ, gate vectors, embeddings) stored in BF16.
-- **Model config** (d_model, num_heads, max_seq_len, etc.) embedded in the SafeTensors `__metadata__` JSON, so no separate config file is needed.
+- **Model config** ships as a separate `config.json` (the SafeTensors header carries no `__metadata__` block). `needle-rs` does not read it — the engine derives geometry from tensor shapes — but it is there for tooling that expects one.
 
 This format is consumed directly by `needle-rs`. It is not compatible with `transformers`, `safetensors-rust` direct loading without the `needle-rs` engine, or other generic SafeTensors consumers, because the `I4` dtype is non-standard.
 
@@ -142,7 +190,7 @@ vocab_path   = hf_hub_download("Abdalrahman/needle-rs-safetensors", "vocab.txt")
 Or via CLI:
 
 ```bash
-huggingface-cli download Abdalrahman/needle-rs-safetensors \
+hf download Abdalrahman/needle-rs-safetensors \
   needle.safetensors vocab.txt --local-dir weights/
 ```
 
@@ -154,7 +202,7 @@ huggingface-cli download Abdalrahman/needle-rs-safetensors \
 ./needle-rs weights/needle.safetensors weights/vocab.txt \
   "What's the weather in Paris?" \
   '[{"name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}}]'
-# → {"name":"get_weather","arguments":{"location":"Paris"}}
+# → [{"name":"get_weather","arguments":{"location":"Paris"}}]
 ```
 
 ### Rust
@@ -186,7 +234,7 @@ const [weights, vocab] = await Promise.all([
 
 const engine = NeedleWasm.load(weights, vocab);
 const result = engine.run("Book a flight from London to JFK tomorrow", toolsJson);
-// → {"name":"book_flight","arguments":{"origin":"London","destination":"JFK","date":"tomorrow"}}
+// → [{"name":"book_flight","arguments":{"origin":"London","destination":"JFK","date":"tomorrow"}}]
 ```
 
 **Live demo:** [needle-rs.pages.dev](https://needle-rs.pages.dev) — the demo loads exactly these files from this repository.
@@ -215,13 +263,16 @@ result = engine.run_stream(query, tools_json, lambda token_id, piece: print(piec
 # Batch
 results = engine.run_batch([("query1", tools1), ("query2", tools2)])
 
-# Semantic tool retrieval (requires weights with a contrastive head)
+# Semantic tool retrieval. NOTE: the weights in THIS repository carry no
+# contrastive head (339 tensors, none of them a projection head), so this
+# returns [] and encode_contrastive() returns None. The API is here for
+# checkpoints that do have the head.
 ranked = engine.retrieve_tools(
     "What's the weather in Paris?",
     ["Get current weather for a location", "Book a flight", "Send an email"],
     top_k=2,
 )
-# → [(0, 0.91), (1, 0.38)]
+# → []  with these weights
 ```
 
 ### Multi-tool routing example
@@ -229,16 +280,23 @@ ranked = engine.retrieve_tools(
 Needle is trained to pick the right tool from a list, not just fill a single tool's parameters:
 
 ```bash
-./needle-rs weights/needle.safetensors weights/vocab.txt \
-  "Turn off the bedroom lights" \
-  '[
-    {"name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}},
-    {"name":"play_music","parameters":{"type":"object","properties":{"song":{"type":"string"}}}},
-    {"name":"control_lights","parameters":{"type":"object","properties":{"room":{"type":"string"},"state":{"type":"string"}}}},
-    {"name":"send_message","parameters":{"type":"object","properties":{"recipient":{"type":"string"},"body":{"type":"string"}}}}
-  ]'
-# → {"name":"control_lights","arguments":{"room":"bedroom","state":"off"}}
+TOOLS='[
+  {"name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string"}}}},
+  {"name":"play_music","parameters":{"type":"object","properties":{"song":{"type":"string"}}}},
+  {"name":"send_message","parameters":{"type":"object","properties":{"recipient":{"type":"string"},"body":{"type":"string"}}}}
+]'
+
+./needle-rs weights/needle.safetensors weights/vocab.txt "What's the weather in Paris?" "$TOOLS"
+# → [{"name":"get_weather","arguments":{"location":"Paris"}}]
+
+./needle-rs weights/needle.safetensors weights/vocab.txt "Play Yesterday" "$TOOLS"
+# → [{"name":"play_music","arguments":{"song":"Yesterday"}}]
 ```
+
+An empty array — `[]` — is a deliberate abstention, not a failure to parse: the
+model declined to route. v1 abstains readily as the catalogue grows or the
+phrasing drifts, which is a real limitation of the 26M model rather than a bug in
+the runtime. See [Limitations](#limitations).
 
 ## Intended use
 
@@ -246,15 +304,22 @@ Needle is trained to pick the right tool from a list, not just fill a single too
 - **Edge function dispatch** — Cloudflare Workers, Vercel Edge, Deno Deploy, anywhere with a WASM engine and ≤30 MB of available memory.
 - **On-device function calling** in privacy-sensitive contexts (healthcare, legal, personal data) where sending user queries to a hosted LLM is unacceptable.
 - **Embedded agents** on hardware with enough RAM for the weights (≈30 MB working set including activations).
-- **Tool retrieval** — the optional contrastive head exposed by `needle-rs.encode_contrastive()` can semantically rank a tool catalogue before passing the top-K to the generator.
+- **Tool retrieval** — `needle-rs` exposes `encode_contrastive()` / `retrieve_tools()` for ranking a large tool catalogue before passing the top-K to the generator. This needs a checkpoint with a contrastive head; **the weights in this repository do not have one**, so both return empty on these files.
 
 ## Limitations
 
 - **Tool calling only.** Needle is trained for the single task of mapping a query plus tool definitions to a JSON call. It is not a chat model and will not produce meaningful free-form text.
 - **Single-shot.** No multi-turn dialogue, no chain-of-thought, no tool-use feedback loop. Each call is independent.
 - **English-trained.** Multilingual behavior is not evaluated by upstream and is not guaranteed.
-- **Greedy decoding only** for v1 in `needle-rs` — stochasticity is undesirable for routing, and v1 exposes no sampling path. (The runtime's v2 and v3 engines do support temperature, seeding and schema-constrained decoding; that applies to `.cact` weights, not to these files.)
-- **Encoder length ≤ 1,024 tokens.** Long tool catalogues must be pre-filtered via contrastive retrieval before being passed in.
+- **Greedy decoding only** on the v1 path in `needle-rs` — stochasticity is undesirable for routing, so no sampling is exposed. (`--temperature` and `--seed` exist, but apply to the v3 and v2 paths.)
+- **Encoder length ≤ 1,024 tokens.** Long tool catalogues must be truncated or pre-filtered before being passed in.
+- **Routing degrades as the catalogue grows.** Measured on these weights: with
+  three tools, clean queries route correctly; with four, several queries that a
+  human would find unambiguous return `[]` instead, and one produced a malformed
+  call with a repeated argument key. Keep the catalogue small, or use Needle 3 or 2,
+  which handled the same four-tool cases correctly.
+- **No contrastive head in this checkpoint**, so the retrieval API cannot be used
+  to do that pre-filtering with these weights.
 - **Small-model failure modes apply.** Ambiguous queries, tools with overlapping descriptions, or unusual parameter schemas can produce unexpected routings. The constrained decoder guarantees syntactic validity, not semantic correctness.
 
 ## Out of scope
@@ -266,7 +331,7 @@ Needle is trained to pick the right tool from a list, not just fill a single too
 
 ## Citation
 
-If you publish or distribute work that uses these weights, please cite **the upstream Needle model**. These files convert v1, so v1 is the entry to use:
+If you publish or distribute work that uses these weights, please cite **the upstream Needle paper/repository**:
 
 ```bibtex
 @misc{ndubuaku2026needle,
@@ -275,19 +340,6 @@ If you publish or distribute work that uses these weights, please cite **the ups
             and Sandhu, Parkirat and Kumar, Satyajit and Cylich, Noah and Lee, Justin H.},
   year   = {2026},
   url    = {https://github.com/cactus-compute/needle}
-}
-```
-
-If your work uses Needle **v2 or v3** instead, cite the entry Cactus asks for, reproduced verbatim from their README. The design and ablations are in [arXiv:2607.18363](https://arxiv.org/abs/2607.18363):
-
-```bibtex
-@misc{needle2_2026,
-  title        = {Needle 2: A 45M-Parameter Foundation Tool-Calling Model for Tiny Devices},
-  author       = {Ndubuaku, Henry and Mosoyan, Karen and Mroz, Jakub and Cylich, Noah and
-                  Kumar, Satyajit and Sandhu, Parkirat and Shemet, Roman and Lee, Justin H.},
-  year         = {2026},
-  organization = {Cactus Compute, Inc.},
-  howpublished = {\url{https://github.com/cactus-compute/needle}}
 }
 ```
 
@@ -304,10 +356,12 @@ Optionally, cite the runtime if relevant to your work:
 
 ## License
 
-MIT — matching the upstream Needle release.
+MIT — matching the Needle 1 weights this repository converts.
 
 This repository performs only **format conversion** (Flax/Pickle → SafeTensors with INT4 packing) and quantization (BF16 → INT4 group-wise) of weights originally released by Cactus Compute under MIT. No retraining, fine-tuning, distillation, or modification of model behavior has been performed. All learned parameters originate from the upstream release.
 
+Note that licensing differs by generation upstream: Needle 1 and Needle 2 weights are MIT, while the upstream repository and the Needle 3 weights are Apache-2.0. Check the licence on the generation you ship.
+
 ## Acknowledgments
 
-The Needle model is the work of [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. Their decision to release the weights, training code and dataset generation pipeline openly — the repository under Apache-2.0, the Needle 1 and Needle 2 weights under MIT and Needle 3's under Apache-2.0 — is what makes downstream runtimes like `needle-rs` possible. If this conversion is useful to you, please consider [starring the upstream repository](https://github.com/cactus-compute/needle) as well.
+The Needle model is the work of [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. Their decision to release the weights, training code and dataset generation pipeline openly — Needle 1 and Needle 2 under MIT, the repository and Needle 3 under Apache-2.0 — is what makes downstream runtimes like `needle-rs` possible. If this conversion is useful to you, please consider [starring the upstream repository](https://github.com/cactus-compute/needle) as well.
