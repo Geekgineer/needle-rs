@@ -29,10 +29,10 @@
 
 <br/>
 
-<img src="https://raw.githubusercontent.com/Geekgineer/needle-rs/main/assets/terminal.svg" alt="A needle-rs session: two tool calls answered locally by Needle v2, then the same query on Needle v1" width="100%"/>
+<img src="https://raw.githubusercontent.com/Geekgineer/needle-rs/main/assets/terminal.svg" alt="A needle-rs session: Needle v3 reasoning before a tool call, the same query with the int8 cache, then Needle v2 from the same binary" width="100%"/>
 
 <p align="center">
-  <sub>Real output. For the browser version, try the <a href="https://needle-rs.pages.dev">live demo</a> — it runs both models.</sub>
+  <sub>Real output. For the browser version, try the <a href="https://needle-rs.pages.dev">live demo</a> — it runs all three generations.</sub>
 </p>
 
 <br/>
