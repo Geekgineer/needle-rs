@@ -7,7 +7,9 @@
 use needle_core::v3::kernels::{HadaMlp, HadaPerms};
 extern crate alloc;
 
+use needle_core::cq::CqWeight;
 use needle_core::v3::heads::{ProbeHead, HEAD_CONFIDENCE};
+use needle_core::v3::ladder_layer_indices;
 use needle_core::v3::{V3Config, V3Engram, V3EngramSite, V3Layer, V3Mhc, V3Model};
 
 use crate::cact::{CactV3, CactV3Geometry};
@@ -387,6 +389,52 @@ impl V3Layout {
 /// matvec'd directly, so the 35 MB container never expands to a dense copy.
 /// Only the FP16/FP32 vectors — norms, gates, diagonals, Kronecker factors and
 /// the Hadamard permutations — are decoded to `f32`.
+/// Build one layer from its canon slots.
+///
+/// Shared by the full-depth loader and the ladder slice so the two cannot drift
+/// apart: a rung differs by *which* layers it takes, never by how one is read.
+fn layer_from_layout(cact: &CactV3, l: &V3LayerIdx) -> Result<V3Layer, V3LoadError> {
+    let (q_taps, k_taps, v_taps) = match l.qkv_taps {
+        Some([q, k, v]) => (cact.floats(q)?, cact.floats(k)?, cact.floats(v)?),
+        None => (Vec::new(), Vec::new(), Vec::new()),
+    };
+    let m = l.mlp;
+    Ok(V3Layer {
+        norm_in: cact.floats(l.norm_in)?,
+        q_proj: cact.cq(l.q_proj)?,
+        k_proj: cact.cq(l.k_proj)?,
+        v_proj: cact.cq(l.v_proj)?,
+        q_taps,
+        k_taps,
+        v_taps,
+        q_norm: cact.floats(l.q_norm)?,
+        k_norm: cact.floats(l.k_norm)?,
+        gate_proj: cact.cq(l.gate_proj)?,
+        out_proj: cact.cq(l.out_proj)?,
+        post_norm: cact.floats(l.post_norm)?,
+        attn_gate: *cact
+            .floats(l.attn_gate)?
+            .first()
+            .ok_or(V3LoadError::EmptyScalar("attn_gate"))?,
+        pre_hada: cact.floats(l.pre_hada)?,
+        // Canon order: d1, d2, b2, d3, d4, w1a, w1b, w2a, w2b, w3a, w3b,
+        // cond_v, cond_u.
+        mlp: HadaMlp {
+            d1: cact.floats(m[0])?,
+            d2: cact.floats(m[1])?,
+            b2: cact.floats(m[2])?,
+            d3: cact.floats(m[3])?,
+            d4: cact.floats(m[4])?,
+            w1: (cact.floats(m[5])?, cact.floats(m[6])?),
+            w2: (cact.floats(m[7])?, cact.floats(m[8])?),
+            w3: (cact.floats(m[9])?, cact.floats(m[10])?),
+            cond_v: cact.floats(m[11])?,
+            cond_u: cact.floats(m[12])?,
+            cond_rank: cact.record(m[11]).shape[1],
+        },
+    })
+}
+
 pub fn model_from_cact(cact: &CactV3) -> Result<V3Model, V3LoadError> {
     let cfg = config_from_geometry(&cact.geom)?;
     let layout = V3Layout::derive(&cfg, cact.records())?;
@@ -395,45 +443,7 @@ pub fn model_from_cact(cact: &CactV3) -> Result<V3Model, V3LoadError> {
 
     let mut layers = Vec::with_capacity(cfg.num_layers);
     for l in &layout.layers {
-        let (q_taps, k_taps, v_taps) = match l.qkv_taps {
-            Some([q, k, v]) => (cact.floats(q)?, cact.floats(k)?, cact.floats(v)?),
-            None => (Vec::new(), Vec::new(), Vec::new()),
-        };
-        let m = l.mlp;
-        layers.push(V3Layer {
-            norm_in: cact.floats(l.norm_in)?,
-            q_proj: cact.cq(l.q_proj)?,
-            k_proj: cact.cq(l.k_proj)?,
-            v_proj: cact.cq(l.v_proj)?,
-            q_taps,
-            k_taps,
-            v_taps,
-            q_norm: cact.floats(l.q_norm)?,
-            k_norm: cact.floats(l.k_norm)?,
-            gate_proj: cact.cq(l.gate_proj)?,
-            out_proj: cact.cq(l.out_proj)?,
-            post_norm: cact.floats(l.post_norm)?,
-            attn_gate: *cact
-                .floats(l.attn_gate)?
-                .first()
-                .ok_or(V3LoadError::EmptyScalar("attn_gate"))?,
-            pre_hada: cact.floats(l.pre_hada)?,
-            // Canon order: d1, d2, b2, d3, d4, w1a, w1b, w2a, w2b, w3a, w3b,
-            // cond_v, cond_u.
-            mlp: HadaMlp {
-                d1: cact.floats(m[0])?,
-                d2: cact.floats(m[1])?,
-                b2: cact.floats(m[2])?,
-                d3: cact.floats(m[3])?,
-                d4: cact.floats(m[4])?,
-                w1: (cact.floats(m[5])?, cact.floats(m[6])?),
-                w2: (cact.floats(m[7])?, cact.floats(m[8])?),
-                w3: (cact.floats(m[9])?, cact.floats(m[10])?),
-                cond_v: cact.floats(m[11])?,
-                cond_u: cact.floats(m[12])?,
-                cond_rank: cact.record(m[11]).shape[1],
-            },
-        });
+        layers.push(layer_from_layout(cact, l)?);
     }
 
     let sc = layout.mhc.scalars;
@@ -598,6 +608,182 @@ impl core::fmt::Display for V3LoadError {
 }
 
 impl std::error::Error for V3LoadError {}
+
+// ── Ladder rungs, sliced at load ────────────────────────────────────────────
+
+/// The config a rung of `depth` declares, derived from its parent's.
+///
+/// Mirrors upstream `ladder_config`: the kept blocks are renumbered
+/// contiguously, and the global-attention layers and Engram sites follow them.
+/// A container built by `needle build --layers N` carries exactly this, which
+/// is what makes a load-time slice and a pre-built rung the same model.
+pub fn config_at_depth(parent: &V3Config, depth: usize) -> Option<V3Config> {
+    let kept = ladder_layer_indices(parent.num_layers, depth)?;
+    let rank = |l: usize| kept.iter().position(|&k| k == l);
+    let mut cfg = parent.clone();
+    cfg.num_layers = depth;
+    cfg.global_layers = parent
+        .global_layers
+        .iter()
+        .filter_map(|&l| rank(l))
+        .collect();
+    cfg.engram.sites = parent
+        .engram
+        .sites
+        .iter()
+        .filter_map(|&l| rank(l))
+        .collect();
+    Some(cfg)
+}
+
+/// Load the `depth`-block rung of a full-depth container.
+///
+/// Needle 3 is laddered: every depth from 2 to `num_layers` is a trained
+/// subnetwork, and upstream ships one by rewriting the container. This does the
+/// same slice at load time, so one 35 MB file serves every rung without a
+/// second download.
+///
+/// The slice is exact, not approximate. Per-layer tensors are kept whole;
+/// Cactus-Quants packs each row independently, so the mHC lane matrices are cut
+/// with [`CqWeight::select_rows`] and keep the codes they were trained with;
+/// and the Engram tables of surviving sites are kept entire and renumbered.
+/// Nothing is re-quantised.
+///
+/// Note that a block's mHC lane is `index % lanes`, computed from its position
+/// in the *sliced* stack — so a kept block generally moves lane. That is
+/// upstream's behaviour, not an oversight: the ladder is trained across sampled
+/// depths precisely so the blocks tolerate it.
+pub fn model_from_cact_at_depth(cact: &CactV3, depth: usize) -> Result<V3Model, V3LoadError> {
+    let parent = config_from_geometry(&cact.geom)?;
+    if depth == parent.num_layers {
+        return model_from_cact(cact);
+    }
+    let kept = ladder_layer_indices(parent.num_layers, depth)
+        .ok_or(V3LoadError::Shape("depth is outside the ladder"))?;
+    let cfg = config_at_depth(&parent, depth).ok_or(V3LoadError::Shape("bad ladder depth"))?;
+    let layout = V3Layout::derive(&parent, cact.records())?;
+    let n = parent.mhc_lanes;
+
+    let mut layers = Vec::with_capacity(depth);
+    for &src in &kept {
+        layers.push(layer_from_layout(cact, &layout.layers[src])?);
+    }
+
+    // Per-layer mHC scalars follow the kept blocks; the lane matrices are rows
+    // `layer * lanes` and `layer * lanes²`.
+    let take = |v: &[f32], width: usize| -> Vec<f32> {
+        let mut out = Vec::with_capacity(kept.len() * width);
+        for &l in &kept {
+            out.extend_from_slice(&v[l * width..(l + 1) * width]);
+        }
+        out
+    };
+    let rows = |width: usize| -> Vec<usize> {
+        kept.iter()
+            .flat_map(|&l| l * width..(l + 1) * width)
+            .collect()
+    };
+    let sc = layout.mhc.scalars;
+    let phi = layout.mhc.phi;
+    let cut = |w: CqWeight, width: usize| -> Result<CqWeight, V3LoadError> {
+        w.select_rows(&rows(width))
+            .ok_or(V3LoadError::Shape("mHC lane row out of range"))
+    };
+    let mhc = V3Mhc {
+        a_pre: take(&cact.floats(sc[0])?, 1),
+        a_post: take(&cact.floats(sc[1])?, 1),
+        a_res: take(&cact.floats(sc[2])?, 1),
+        b_pre: take(&cact.floats(sc[3])?, n),
+        b_post: take(&cact.floats(sc[4])?, n),
+        b_res: take(&cact.floats(sc[5])?, n * n),
+        phi_pre: cut(cact.cq(phi[0])?, n)?,
+        phi_post: cut(cact.cq(phi[1])?, n)?,
+        phi_res: cut(cact.cq(phi[2])?, n * n)?,
+    };
+
+    // An Engram site survives exactly when its block does.
+    let mut engrams = Vec::new();
+    for (site, e) in layout.engrams.iter().enumerate() {
+        let layer = parent.engram.sites[site];
+        if !kept.contains(&layer) {
+            continue;
+        }
+        engrams.push(V3EngramSite {
+            tables: cact.cq(e.tables)?,
+            key_proj: cact.cq(e.key_proj)?,
+            value_proj: cact.cq(e.value_proj)?,
+            taps: cact.floats(e.taps)?,
+        });
+    }
+
+    let to_perm = |v: Vec<f32>| -> Vec<u32> { v.into_iter().map(|x| x as u32).collect() };
+    let perms = HadaPerms {
+        p1: to_perm(cact.floats(layout.hada_perms[0])?),
+        p2: to_perm(cact.floats(layout.hada_perms[1])?),
+    };
+    V3Model::new(
+        cfg,
+        cact.cq(layout.embedding)?,
+        layers,
+        mhc,
+        engrams,
+        cact.floats(layout.final_norm)?,
+        perms,
+    )
+    .map_err(V3LoadError::Shape)
+}
+
+/// The confidence head of a `depth`-block rung.
+///
+/// Upstream takes rows `(0, *(layer + 1 for layer in selected))` from `probes`
+/// and `gain`, and the same rows along axis 1 of `row_bias`; `query`, `proj`
+/// and `bias` are shared across depths and untouched. Row 0 is the input
+/// embedding cell, which every rung keeps.
+///
+/// There is no per-depth calibration tensor: one head is trained at full depth
+/// and sliced. It grows conservative as depth falls — upstream notes that at
+/// two blocks it withholds almost every call — which is behaviour, not drift.
+pub fn confidence_head_at_depth(
+    cact: &CactV3,
+    cfg: &V3Config,
+    depth: usize,
+) -> Result<Option<ProbeHead>, V3LoadError> {
+    let Some(full) = confidence_head(cact, cfg)? else {
+        return Ok(None);
+    };
+    if depth == cfg.num_layers {
+        return Ok(Some(full));
+    }
+    let kept = ladder_layer_indices(cfg.num_layers, depth)
+        .ok_or(V3LoadError::Shape("depth is outside the ladder"))?;
+    let cells: Vec<usize> = core::iter::once(0)
+        .chain(kept.iter().map(|&l| l + 1))
+        .collect();
+    let (k, q, d) = (full.probes_per_cell, full.queries, cfg.d_model);
+
+    let mut probes = Vec::with_capacity(cells.len() * k * d);
+    let mut gain = Vec::with_capacity(cells.len() * k);
+    for &c in &cells {
+        probes.extend_from_slice(&full.probes[c * k * d..(c + 1) * k * d]);
+        gain.extend_from_slice(&full.gain[c * k..(c + 1) * k]);
+    }
+    // row_bias is (queries, cells, probes): the cell axis is the middle one.
+    let m = full.cells * k;
+    let mut row_bias = Vec::with_capacity(q * cells.len() * k);
+    for qi in 0..q {
+        for &c in &cells {
+            row_bias.extend_from_slice(&full.row_bias[qi * m + c * k..qi * m + (c + 1) * k]);
+        }
+    }
+
+    Ok(Some(ProbeHead {
+        probes,
+        gain,
+        row_bias,
+        cells: cells.len(),
+        ..full
+    }))
+}
 
 #[cfg(test)]
 mod tests {

@@ -187,6 +187,45 @@ fn memory_reporting_is_available_before_a_session() {
 }
 
 #[test]
+fn a_ladder_rung_loads_at_a_shallower_depth() {
+    if !have_weights() {
+        return;
+    }
+    unsafe {
+        let p = CString::new(CACT).unwrap();
+        let full = load();
+        assert_eq!(needle_v3_num_layers(full), 20);
+
+        let rung = needle_v3_load_with_depth(p.as_ptr(), 8);
+        assert!(!rung.is_null(), "an 8-block rung should load");
+        assert_eq!(needle_v3_num_layers(rung), 8);
+
+        // The whole point of a rung is that it costs less to run.
+        let full_kv = needle_v3_kv_bytes(full, 512, false);
+        let rung_kv = needle_v3_kv_bytes(rung, 512, false);
+        println!(
+            "  20L {:.1} MB vs 8L {:.1} MB of cache at 512 tokens",
+            full_kv as f64 / 1048576.0,
+            rung_kv as f64 / 1048576.0
+        );
+        assert!(rung_kv < full_kv, "the rung should need less cache");
+
+        let q = CString::new(QUERY).unwrap();
+        let t = CString::new(TOOLS).unwrap();
+        let payload = take(needle_v3_run_json(rung, q.as_ptr(), t.as_ptr()));
+        println!("  8L run_json -> {payload}");
+        assert!(payload.contains("get_weather"));
+
+        // Outside 2..=num_layers is a failure, not a clamp.
+        assert!(needle_v3_load_with_depth(p.as_ptr(), 99).is_null());
+        assert!(needle_v3_load_with_depth(p.as_ptr(), 1).is_null());
+
+        needle_v3_free(rung);
+        needle_v3_free(full);
+    }
+}
+
+#[test]
 fn null_arguments_do_not_crash() {
     unsafe {
         // Must hold with no model loaded at all.
@@ -197,6 +236,8 @@ fn null_arguments_do_not_crash() {
         assert_eq!(needle_v3_kv_bytes(ptr::null_mut(), 128, false), 0);
         assert_eq!(needle_v3_kv_bytes(ptr::null_mut(), 128, true), 0);
         assert_eq!(needle_v3_max_seq_len(ptr::null_mut()), 0);
+        assert_eq!(needle_v3_num_layers(ptr::null_mut()), 0);
+        assert!(needle_v3_load_with_depth(ptr::null(), 8).is_null());
         assert!(needle_v3_run(ptr::null_mut(), ptr::null(), ptr::null()).is_null());
 
         let missing = CString::new("definitely-not-here.cact").unwrap();

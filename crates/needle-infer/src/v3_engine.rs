@@ -12,7 +12,10 @@ use crate::cact::CactV3;
 use crate::constrained::{byte_table, ConstrainedDecoder, ToolDef};
 use crate::prompt::{build_prompt, IM_END, THINK_END, THINK_START, TOOL_CALL_END, TOOL_CALL_START};
 use crate::sp_tokenizer::SpTokenizer;
-use crate::v3::{confidence_head, model_from_cact, V3LoadError};
+use crate::v3::{
+    confidence_head, confidence_head_at_depth, config_from_geometry, model_from_cact,
+    model_from_cact_at_depth, V3LoadError,
+};
 use needle_core::v3::heads::ProbeHead;
 
 /// Default generation cap.
@@ -110,12 +113,61 @@ impl V3Engine {
         Self::from_cact(&cact)
     }
 
+    /// Load a ladder rung: the `layers`-block subnetwork of a full container.
+    ///
+    /// Needle 3 is trained so that every depth from 2 to `num_layers` is a
+    /// deployable model. Upstream ships a rung by rewriting the container;
+    /// this takes the same slice at load time, so one file serves every depth
+    /// without a second download — a shallow pass for a simple command, the
+    /// full stack for a hard one.
+    ///
+    /// The blocks kept are not a prefix. They are chosen by bisecting from both
+    /// endpoints, so the rungs nest and stay spread across the stack; block 0
+    /// and the last block are in every rung. Quality falls with depth, steeply
+    /// at the bottom: on the shipped checkpoint 2 and 4 blocks are not usable
+    /// for tool calling, while 6 upward answer correctly.
+    ///
+    /// `layers` equal to the container's own depth loads it unchanged. A depth
+    /// outside `2..=num_layers` is rejected.
+    pub fn load_with_depth<P: AsRef<std::path::Path>>(
+        path: P,
+        layers: usize,
+    ) -> Result<Self, V3EngineError> {
+        let cact = CactV3::load(path).map_err(V3EngineError::Io)?;
+        Self::from_cact_at_depth(&cact, layers)
+    }
+
+    /// As [`Self::load_with_depth`], from bytes already in memory.
+    pub fn from_bytes_with_depth(bytes: Vec<u8>, layers: usize) -> Result<Self, V3EngineError> {
+        let cact = CactV3::from_bytes(bytes).map_err(|e| V3EngineError::Load(e.into()))?;
+        Self::from_cact_at_depth(&cact, layers)
+    }
+
     pub fn from_cact(cact: &CactV3) -> Result<Self, V3EngineError> {
         let model = model_from_cact(cact).map_err(V3EngineError::Load)?;
+        Self::finish(cact, model, None)
+    }
+
+    /// Build the engine from a rung of `cact`.
+    pub fn from_cact_at_depth(cact: &CactV3, layers: usize) -> Result<Self, V3EngineError> {
+        let model = model_from_cact_at_depth(cact, layers).map_err(V3EngineError::Load)?;
+        Self::finish(cact, model, Some(layers))
+    }
+
+    fn finish(cact: &CactV3, model: V3Model, depth: Option<usize>) -> Result<Self, V3EngineError> {
         let blob = cact.tokenizer_blob().ok_or(V3EngineError::NoTokenizer)?;
         let tokenizer = SpTokenizer::from_blob(blob).map_err(|_| V3EngineError::BadTokenizer)?;
         let im_end_id = tokenizer.id_of(IM_END);
-        let confidence = confidence_head(cact, &model.cfg).map_err(V3EngineError::Load)?;
+        // The head is sliced against the *container's* depth, so it is derived
+        // from the parent config rather than the model's own.
+        let confidence = match depth {
+            Some(d) => {
+                let parent = config_from_geometry(&cact.geom)
+                    .map_err(|e| V3EngineError::Load(V3LoadError::Geometry(e)))?;
+                confidence_head_at_depth(cact, &parent, d).map_err(V3EngineError::Load)?
+            }
+            None => confidence_head(cact, &model.cfg).map_err(V3EngineError::Load)?,
+        };
         Ok(Self {
             model,
             tokenizer,

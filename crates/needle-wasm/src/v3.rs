@@ -32,6 +32,29 @@ impl NeedleV3Wasm {
             .map(|engine| NeedleV3Wasm { engine })
     }
 
+    /// Load the `layers`-block ladder rung of the same container.
+    ///
+    /// Needle 3 is trained so that every depth from 2 blocks up is a usable
+    /// model. A tab can hold one 35 MB download and pick its depth: a shallow
+    /// pass for a simple command, the full stack for a hard one. Shallower
+    /// rungs also cost proportionally less key/value cache.
+    ///
+    /// Quality falls with depth, steeply at the bottom — on the shipped
+    /// weights 2 and 4 blocks do not produce usable tool calls, 6 upward do.
+    /// Returns `undefined` for a depth outside `2..=num_layers`.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = load_with_depth))]
+    pub fn load_with_depth(cact_bytes: Vec<u8>, layers: usize) -> Option<NeedleV3Wasm> {
+        V3Engine::from_bytes_with_depth(cact_bytes, layers)
+            .ok()
+            .map(|engine| NeedleV3Wasm { engine })
+    }
+
+    /// How many blocks this engine is running.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = num_layers))]
+    pub fn num_layers(&self) -> usize {
+        self.engine.model.cfg.num_layers
+    }
+
     /// The full completion, reasoning included.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = run))]
     pub fn run(&self, query: &str, tools_json: &str) -> String {

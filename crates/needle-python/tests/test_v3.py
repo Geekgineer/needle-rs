@@ -88,6 +88,17 @@ check(
     "the int8 cache produces the same tool call",
 )
 
+rung = V3Engine.load_with_depth("weights/needle3.cact", 8)
+print(f"  ladder rung: {rung.num_layers} layers (full: {e.num_layers})")
+check(rung.num_layers == 8 and e.num_layers == 20, "load_with_depth selects the rung")
+check(rung.kv_bytes(512) < e.kv_bytes(512), "a shallower rung needs less cache")
+check("get_weather" in (rung.run_json(Q, TOOLS) or ""), "the rung still calls the tool")
+try:
+    V3Engine.load_with_depth("weights/needle3.cact", 99)
+    check(False, "a depth outside the ladder must raise")
+except ValueError:
+    check(True, "a depth outside the ladder raises")
+
 none = e.run_json("Write me a poem about the sea", TOOLS)
 print("  poem ->", repr(none))
 check(none in ("[]", None), "unrelated query abstains")

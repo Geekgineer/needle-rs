@@ -31,6 +31,7 @@ Options:
   --json              Print only the tool-call payload, not the full text (v3, v2)
   --constrain         Restrict the tool-call payload to the declared schema (v3, v2)
   --kv-int8           Store the KV cache as int8: ~1/4 the memory (v3)
+  --layers <N>        Run the N-block ladder rung of a v3 model (2..num_layers)
   --prefill-chunk <N> Positions per batched-prefill chunk; 0 prefills one at a
                       time (v2 only, default 64)
   --help              Print this message
@@ -49,6 +50,7 @@ struct Opts {
     json_only: bool,
     constrain: bool,
     kv_int8: bool,
+    layers: Option<usize>,
     prefill_chunk: Option<usize>,
     max_tokens: Option<usize>,
     temperature: Option<f32>,
@@ -77,6 +79,7 @@ fn parse_args() -> Opts {
         json_only: false,
         constrain: false,
         kv_int8: false,
+        layers: None,
         prefill_chunk: None,
         max_tokens: None,
         temperature: None,
@@ -91,6 +94,13 @@ fn parse_args() -> Opts {
             "--json" => o.json_only = true,
             "--constrain" => o.constrain = true,
             "--kv-int8" => o.kv_int8 = true,
+            "--layers" => {
+                let v = take(&raw, &mut i, "--layers");
+                o.layers = Some(
+                    v.parse()
+                        .unwrap_or_else(|_| fail("--layers must be an integer")),
+                );
+            }
             "--prefill-chunk" => {
                 let v = take(&raw, &mut i, "--prefill-chunk");
                 o.prefill_chunk = Some(
@@ -178,8 +188,16 @@ fn run_v3(o: &Opts, model: &str) {
         eprintln!("note: --prefill-chunk applies to Needle 2 only; ignoring");
     }
 
-    let engine =
-        V3Engine::load(model).unwrap_or_else(|e| fail(&format!("Failed to load {model}: {e}")));
+    // A rung is the N-block subnetwork of a laddered model. Quality falls with
+    // depth and falls off a cliff at the bottom: on the shipped checkpoint 2 and
+    // 4 blocks do not produce usable tool calls, 6 upward do.
+    let engine = match o.layers {
+        Some(n) => V3Engine::load_with_depth(model, n)
+            .unwrap_or_else(|e| fail(&format!("Failed to load {model} at {n} layers: {e}"))),
+        None => {
+            V3Engine::load(model).unwrap_or_else(|e| fail(&format!("Failed to load {model}: {e}")))
+        }
+    };
     let opts = V3Options {
         // v3 reasons before answering, so it needs more room than v2's 128.
         max_new_tokens: o
@@ -281,6 +299,7 @@ fn run_v1(o: &Opts, model: &str) {
         ("--json", o.json_only),
         ("--constrain", o.constrain),
         ("--kv-int8", o.kv_int8),
+        ("--layers", o.layers.is_some()),
         ("--prefill-chunk", o.prefill_chunk.is_some()),
     ] {
         if set {

@@ -187,16 +187,41 @@ built rung is not byte-comparable to one Cactus ships, and per-rung parity must
 compare the reference against the same container under test, which is how our
 suites already work.
 
-**What a load-time slicer would have to do**, if we implement
-`load_with_depth` against the 20-layer container: keep the selected blocks'
-tensors; keep whole Engram tables for sites whose block survives, renumbered
-contiguously; and slice the confidence head's rows `(0, *(layer + 1 for layer
-in selected))` from `probes` (axis 0), `gain` (axis 0) and `row_bias` (axis 1),
-leaving `query`, `proj` and `bias` alone. There is no adapter to merge — the
-blog's `θd = slice(θ + BA, Sd)` describes training; `ladder_slice` operates on
-the params directly. The obstacle is packing: `probes`, `query` and `proj` are
-Cactus-Quants in the shipped container, so slicing rows means re-packing
-quantised data, and our head loader requires CQ for exactly those three.
+**Slicing at load time**, which `V3Engine::load_with_depth` now does: keep the
+selected blocks' tensors; keep whole Engram tables for sites whose block
+survives, renumbered contiguously; take the per-layer mHC scalars and lane
+matrices for those blocks; and slice the confidence head's rows
+`(0, *(layer + 1 for layer in selected))` from `probes` (axis 0), `gain`
+(axis 0) and `row_bias` (axis 1), leaving `query`, `proj` and `bias` alone.
+There is no adapter to merge — the blog's `θd = slice(θ + BA, Sd)` describes
+training; `ladder_slice` operates on the params directly.
+
+An earlier note here called the packing an obstacle, on the grounds that
+slicing Cactus-Quants rows would mean re-quantising. It does not, for two
+separate reasons, and both were worth checking rather than assuming. The probe
+head is dequantised to `f32` at load anyway — `dense()` calls `cq()` then
+`dequantize_to`, because an 84x768 matrix gains nothing from staying packed —
+so slicing its rows is ordinary `f32` row selection. And where packed rows *do*
+have to be cut, in the mHC lane matrices `phi_pre`, `phi_post` and `phi_res`,
+CQ stores each output row as its own `row_bytes` run with its own per-group
+norms, so a row is independently addressable: `CqWeight::select_rows` copies
+bytes and norms and nothing is re-quantised. `cq::tests::
+selecting_rows_commutes_with_dequantisation` pins that at 2, 3, 4 and ternary
+widths — slice-then-dequantise equals dequantise-then-slice, exactly.
+
+The mHC row arithmetic is the part to get right: `phi_pre` and `phi_post` hold
+`lanes` rows per block starting at `layer * lanes`, while `phi_res` holds
+`lanes²` rows starting at `layer * lanes²`, which is how the forward pass
+indexes them (`matvec_rows_prepared(.., li * n, ..)` and `.., li * n * n, ..`).
+
+**A load-time slice and a built rung agree.** `v3_ladder_slice` compares the two
+at depths 6 and 8 against containers built by upstream's own exporter: identical
+block subsets, identical global-attention layers, identical Engram sites,
+identical cache size. The comparison stops at geometry and behaviour rather than
+bytes, because the published container is 2-bit for most tensors while the
+public exporter can only emit 4 — so a built rung is a different quantisation of
+the same weights, and at 6 blocks the two differ in output (the slice repeats
+the call once). From 8 blocks up both produce the same tool call.
 
 **mHC lanes move when you slice.** The lane is `eye(n)[arange(L) % n]` — a
 function of position in the stack, not of block identity — so block 4 sits in

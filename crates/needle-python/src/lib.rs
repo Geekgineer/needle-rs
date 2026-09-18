@@ -309,6 +309,26 @@ impl PyV3Engine {
         extract_tool_call(text)
     }
 
+    /// Load the `layers`-block ladder rung of a container.
+    ///
+    /// Needle 3 is laddered: every depth from 2 blocks up is a trained
+    /// subnetwork, and one file serves them all. Shallower rungs are faster
+    /// and cost proportionally less key/value cache, at a quality cost that
+    /// becomes severe at the bottom — on the shipped weights 2 and 4 blocks do
+    /// not produce usable tool calls, 6 upward do.
+    #[staticmethod]
+    fn load_with_depth(path: &str, layers: usize) -> PyResult<Self> {
+        V3Engine::load_with_depth(path, layers)
+            .map(|inner| Self { inner })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// How many blocks this engine is running.
+    #[getter]
+    fn num_layers(&self) -> usize {
+        self.inner.model.cfg.num_layers
+    }
+
     /// Generation with explicit settings.
     ///
     /// Returns a dict: `text`, `tool_call`, `reasoning`, `token_ids`,

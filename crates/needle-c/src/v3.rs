@@ -3,6 +3,8 @@
 //! ```text
 //! needle_v3_load(cact_path)                                  -> *NeedleV3Handle
 //! needle_v3_load_bytes(data, len)                            -> *NeedleV3Handle
+//! needle_v3_load_with_depth(cact_path, layers)               -> *NeedleV3Handle
+//! needle_v3_num_layers(h)                                    -> usize
 //! needle_v3_run(h, query, tools_json)                        -> *char
 //! needle_v3_run_json(h, query, tools_json)                   -> *char  (payload only)
 //! needle_v3_reasoning(h, text)                               -> *char  (may be null)
@@ -93,6 +95,45 @@ pub unsafe extern "C" fn needle_v3_load_bytes(data: *const u8, len: usize) -> *m
             ptr::null_mut()
         }
     }
+}
+
+/// Load the `layers`-block ladder rung of a container.
+///
+/// Needle 3 is trained so every depth from 2 blocks up is deployable; one file
+/// serves them all, and a shallower rung costs proportionally less key/value
+/// cache. Quality falls with depth and falls sharply at the bottom: on the
+/// shipped weights 2 and 4 blocks do not produce usable tool calls, 6 upward
+/// do. Null on failure, including a depth outside `2..=num_layers`.
+///
+/// # Safety
+/// `cact_path` must be a valid, null-terminated UTF-8 C string.
+#[no_mangle]
+pub unsafe extern "C" fn needle_v3_load_with_depth(
+    cact_path: *const c_char,
+    layers: usize,
+) -> *mut NeedleV3Handle {
+    clear_last_error();
+    let Some(path) = cstr(cact_path) else {
+        set_last_error("cact_path was null or not UTF-8");
+        return ptr::null_mut();
+    };
+    match V3Engine::load_with_depth(path, layers) {
+        Ok(engine) => Box::into_raw(Box::new(NeedleV3Handle { engine })),
+        Err(e) => {
+            set_last_error(format!("failed to load {path} at {layers} layers: {e}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// How many blocks this handle is running. Zero for a null handle.
+///
+/// # Safety
+/// `handle` must come from a `needle_v3_load*` call.
+#[no_mangle]
+pub unsafe extern "C" fn needle_v3_num_layers(handle_ptr: *mut NeedleV3Handle) -> usize {
+    clear_last_error();
+    handle(handle_ptr).map_or(0, |h| h.engine.model.cfg.num_layers)
 }
 
 unsafe fn handle<'a>(h: *mut NeedleV3Handle) -> Option<&'a NeedleV3Handle> {

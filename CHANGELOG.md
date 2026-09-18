@@ -56,6 +56,23 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 - **`kv_bytes_at(seq_len, precision)`**, and `kv_bytes_int8` on WASM, so a
   caller sizing a budget gets the figure for the cache it will actually
   allocate. Asserted against the real allocation rather than derived on paper.
+- **Selectable depth** — `V3Engine::load_with_depth`, `--layers N` on the CLI,
+  `NeedleV3Wasm.load_with_depth`, `V3Engine.load_with_depth` in Python and
+  `needle_v3_load_with_depth` in C. Needle 3 is a laddered model: every depth
+  from 2 to 20 blocks is a trained subnetwork. Upstream ships one by rewriting
+  the container; this takes the same slice from the full file, so a single
+  35 MB download serves every rung — a shallow pass for a simple command, the
+  full stack for a hard one. 8 blocks needs 3.5 MB of key/value cache against
+  20 blocks' 8.8 MB at 512 tokens.
+
+  The kept blocks are chosen by bisecting from both endpoints, not by
+  truncation, so rungs nest and block 0 and the last block are always present.
+  The slice is exact: Cactus-Quants packs each row independently, so the mHC
+  lane matrices are cut with `CqWeight::select_rows` and keep the codes they
+  were trained with. Verified against containers built by upstream's own
+  exporter — identical geometry at every depth compared, and the same tool call
+  from 8 blocks up. **Quality falls steeply at the bottom**: on the shipped
+  weights 2 and 4 blocks do not produce usable tool calls.
 
 ### Changed
 

@@ -139,6 +139,41 @@ pub struct CqWeight {
 }
 
 impl CqWeight {
+    /// A new tensor holding only `rows`, in the order given.
+    ///
+    /// Cactus-Quants packs each output row into its own `row_bytes` run with
+    /// its own per-group norms, so a row is independently addressable: taking a
+    /// subset is a copy, not a re-quantisation. That is what makes slicing a
+    /// ladder rung out of the full model exact rather than approximate — the
+    /// kept rows keep the codes they were trained with.
+    ///
+    /// Returns `None` if any index is out of range.
+    pub fn select_rows(&self, rows: &[usize]) -> Option<Self> {
+        let mut packed = Vec::with_capacity(rows.len() * self.row_bytes);
+        let mut norms = Vec::with_capacity(rows.len() * self.num_groups);
+        for &r in rows {
+            if r >= self.out_feat {
+                return None;
+            }
+            packed.extend_from_slice(&self.packed[r * self.row_bytes..(r + 1) * self.row_bytes]);
+            norms.extend_from_slice(&self.norms[r * self.num_groups..(r + 1) * self.num_groups]);
+        }
+        Some(Self {
+            packed,
+            norms,
+            lut: self.lut.clone(),
+            per_byte: self.per_byte,
+            row_bytes: self.row_bytes,
+            num_groups: self.num_groups,
+            out_feat: rows.len(),
+            in_feat: self.in_feat,
+            in_padded: self.in_padded,
+            group: self.group,
+            bits: self.bits,
+            levels: self.levels.clone(),
+        })
+    }
+
     /// Parse a CQ tensor from its blob: packed indices followed by FP16 norms.
     ///
     /// `codebook` is the concatenated `cb2|cb3|cb4` block from the `.cact`
@@ -1050,6 +1085,60 @@ mod tests {
 
         let w = CqWeight::from_blob(&blob, out, in_feat, group, bits, &cb).unwrap();
         Case { w, dense }
+    }
+
+    /// Selecting rows then dequantising must equal dequantising then selecting.
+    ///
+    /// If it does not, the packed rows are not independent and slicing a ladder
+    /// rung out of the full model would silently corrupt every kept block.
+    #[test]
+    fn selecting_rows_commutes_with_dequantisation() {
+        for bits in WIDTHS {
+            let (out, in_feat, group) = (12usize, 256usize, 128usize);
+            let case = build_case(out, in_feat, group, bits);
+
+            let rows = [0usize, 3, 4, 9, 11];
+            let cut = case.w.select_rows(&rows).expect("rows are in range");
+            assert_eq!(cut.out_feat, rows.len());
+            assert_eq!(cut.in_feat, in_feat);
+            assert_eq!(cut.bits, case.w.bits);
+
+            let mut dense_cut = vec![0.0f32; rows.len() * in_feat];
+            cut.dequantize_to(&mut dense_cut);
+
+            for (n, &r) in rows.iter().enumerate() {
+                let want = &case.dense[r * in_feat..(r + 1) * in_feat];
+                let got = &dense_cut[n * in_feat..(n + 1) * in_feat];
+                assert_eq!(
+                    want, got,
+                    "bits {bits}: row {r} changed when sliced into position {n}"
+                );
+            }
+        }
+    }
+
+    /// Order is preserved, and a row may be taken more than once.
+    #[test]
+    fn selection_follows_the_order_given() {
+        let (out, in_feat, group) = (6usize, 128usize, 128usize);
+        let case = build_case(out, in_feat, group, 4);
+        let rows = [5usize, 0, 5];
+        let cut = case.w.select_rows(&rows).unwrap();
+        let mut dense_cut = vec![0.0f32; rows.len() * in_feat];
+        cut.dequantize_to(&mut dense_cut);
+        for (n, &r) in rows.iter().enumerate() {
+            assert_eq!(
+                &case.dense[r * in_feat..(r + 1) * in_feat],
+                &dense_cut[n * in_feat..(n + 1) * in_feat]
+            );
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_row_is_refused() {
+        let case = build_case(4, 128, 128, 4);
+        assert!(case.w.select_rows(&[0, 3]).is_some());
+        assert!(case.w.select_rows(&[0, 4]).is_none());
     }
 
     const WIDTHS: [u8; 4] = [2, 3, 4, TERNARY_RECORD_BITS];

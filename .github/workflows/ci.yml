@@ -207,6 +207,8 @@ jobs:
           # 242 MB checkpoint with JAX (tools/build_rung.py), so CI does not
           # make them and this skips cleanly.
           cargo test -p needle-infer  --release --test v3_rung_e2e -- --nocapture
+          # Slicing a rung out of the full container at load time.
+          cargo test -p needle-infer  --release --test v3_ladder_slice -- --nocapture
           # These two need the container only. The int8 suite is what proves
           # the quantised cache saves the memory it claims and that batched
           # prefill and stepped decode stay bit-identical under it.

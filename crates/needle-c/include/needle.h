@@ -370,6 +370,19 @@ typedef struct NeedleV3Handle NeedleV3Handle;
 /** Load Needle 3 from a .cact file. NULL on failure; free with needle_v3_free(). */
 NeedleV3Handle *needle_v3_load(const char *cact_path);
 
+/**
+ * Load the N-block ladder rung of a Needle 3 container.
+ *
+ * Every depth from 2 blocks up is a trained subnetwork; one file serves them
+ * all, and a shallower rung costs proportionally less key/value cache. Quality
+ * falls sharply at the bottom: 2 and 4 blocks do not produce usable tool calls
+ * on the shipped weights, 6 upward do. NULL on failure.
+ */
+NeedleV3Handle *needle_v3_load_with_depth(const char *cact_path, size_t layers);
+
+/** How many blocks a handle is running; 0 for NULL. */
+size_t needle_v3_num_layers(NeedleV3Handle *handle);
+
 /** Load Needle 3 from bytes already in memory. */
 NeedleV3Handle *needle_v3_load_bytes(const unsigned char *data, size_t len);
 

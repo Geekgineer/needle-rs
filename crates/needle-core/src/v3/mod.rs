@@ -9,6 +9,7 @@ pub mod config;
 pub mod engram;
 pub mod heads;
 pub mod kernels;
+pub mod ladder;
 pub mod mhc;
 pub mod model;
 
@@ -20,5 +21,6 @@ pub use config::{V3Config, V3Engram};
 pub use engram::{engram_indices, ngram_valid, EngramDims};
 pub use heads::{ProbeHead, HEAD_CONFIDENCE, HEAD_EMBEDDING, HEAD_ROUTER};
 pub use kernels::{hada_blocks, hadamard_mlp, kron_apply, HadaMlp, HadaPerms};
+pub use ladder::{ladder_layer_indices, ladder_order};
 pub use mhc::{mix_down, post_off, pre_off, scatter_up, MhcLayer};
 pub use model::{V3EngramSite, V3Layer, V3Mhc, V3Model};

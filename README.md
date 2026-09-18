@@ -144,6 +144,11 @@ needle-rs --json --constrain weights/needle3.cact \
 # --kv-int8 stores the cache at 8 bits: 2.3 MB instead of 8.8 MB at 512 tokens.
 needle-rs --kv-int8 weights/needle3.cact "$QUERY" "$TOOLS"
 
+# --layers runs a shallower rung of the same file: Needle 3 is trained so every
+# depth from 2 to 20 blocks is a usable model. 8 blocks needs 3.5 MB of cache
+# instead of 8.8 MB. Below 6 the answers stop being usable.
+needle-rs --layers 8 weights/needle3.cact "$QUERY" "$TOOLS"
+
 # v2 — same binary, same invocation
 needle-rs --json weights/needle2.cact "$QUERY" "$TOOLS"
 
@@ -248,6 +253,7 @@ Upstream replaced v1's encoder–decoder with a decoder-only architecture in a n
 <tr><td>Confidence head</td><td>✓</td><td>✓</td><td>—</td></tr>
 <tr><td>Tool retrieval head</td><td>—</td><td>✓ 128-d</td><td>— <sub>architecture has one; the published weights do not</sub></td></tr>
 <tr><td>Quantised KV cache</td><td>✓ <code>--kv-int8</code></td><td>—</td><td>—</td></tr>
+<tr><td>Selectable depth</td><td>✓ <code>--layers</code> <sub>2–20 blocks from one file</sub></td><td>—</td><td>—</td></tr>
 <tr><td>Weights licence</td><td>Apache-2.0</td><td>MIT</td><td>MIT</td></tr>
 </tbody>
 </table>
