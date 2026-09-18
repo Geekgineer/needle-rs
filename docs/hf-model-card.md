@@ -24,9 +24,13 @@
 4. `library_name: needle-rs` is not a registered HF library; HF will display it as-is.
    That is fine — it links users to the runtime.
 
-## Paste below into HF README.md (everything from the `---` onward, verbatim)
+## Paste below into HF README.md
 
-The YAML front-matter must be at the very top of the file with no blank line before it.
+Copy from the `---` that begins `license: mit` — **not** the horizontal rule
+below this paragraph — through to the end of the file, verbatim. The YAML
+front-matter must be the very first line of the HF README with no blank line
+above it; a stray rule or blank line there makes HF render the block as text
+instead of parsing it.
 
 ---
 
@@ -306,4 +310,4 @@ This repository performs only **format conversion** (Flax/Pickle → SafeTensors
 
 ## Acknowledgments
 
-The Needle model is the work of [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. Their decision to release the weights, training code, and dataset generation pipeline under MIT is what makes downstream runtimes like `needle-rs` possible. If this conversion is useful to you, please consider [starring the upstream repository](https://github.com/cactus-compute/needle) as well.
+The Needle model is the work of [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. Their decision to release the weights, training code and dataset generation pipeline openly — the repository under Apache-2.0, the Needle 1 and Needle 2 weights under MIT and Needle 3's under Apache-2.0 — is what makes downstream runtimes like `needle-rs` possible. If this conversion is useful to you, please consider [starring the upstream repository](https://github.com/cactus-compute/needle) as well.

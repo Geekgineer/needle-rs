@@ -49,7 +49,8 @@ impl NeedleV3Wasm {
 
     /// The model's chain-of-thought, if it produced any.
     ///
-    /// New in v3: v2 answered directly, v3 usually reasons first.
+    /// v3 reasons on essentially every query; v2 only sometimes, and v1 never.
+    /// A `<think>` block is not a reliable marker of which generation ran.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = reasoning))]
     pub fn reasoning(&self, text: &str) -> Option<String> {
         V3Engine::reasoning(text).map(str::to_string)

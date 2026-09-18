@@ -257,8 +257,8 @@ impl PyV2Engine {
 ///
 /// * No `encode_contrastive` or `retrieve_tools`. v3 exports a confidence head
 ///   and nothing else, so they would return empty on every call.
-/// * `reasoning()`, because v3 answers with a `<think>` block where v2 answered
-///   directly.
+/// * `reasoning()`, because v3 emits a `<think>` block on essentially every
+///   query. v2 does so only sometimes, so the block is not a generation marker.
 #[pyclass(name = "V3Engine", module = "needle_rs")]
 struct PyV3Engine {
     inner: V3Engine,

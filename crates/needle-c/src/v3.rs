@@ -143,7 +143,9 @@ pub unsafe extern "C" fn needle_v3_run_json(
 
 /// The chain-of-thought inside a completion, or null if there is none.
 ///
-/// New in v3: v2 answered directly.
+/// v3 emits one on essentially every query; v2 only sometimes, and v1 never.
+/// A `<think>` block is therefore not a reliable marker of which generation
+/// produced a completion.
 ///
 /// # Safety
 /// `handle` must come from `needle_v3_load`; `text` must be a valid C string.

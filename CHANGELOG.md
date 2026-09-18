@@ -77,9 +77,11 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 - **v3 exports no contrastive head**, so `retrieve_tools` and
   `encode_contrastive` have no v3 equivalent. The methods are absent rather
   than present-and-always-empty.
-- **v3 reasons before answering.** It emits a `<think>` block where v2 answered
-  directly, so the default token budget is 256 rather than 128 and the
-  bindings expose `reasoning()`.
+- **v3 reasons before answering**, on essentially every query. v2 does so only
+  sometimes — 2 of 3 sample prompts on the shipped checkpoint — so a caller that
+  treated a `<think>` block as a v3 marker would misclassify v2 output. The
+  default token budget is 256 rather than v2's 128, and the bindings expose
+  `reasoning()` on both.
 - **The confidence head is easier to misuse on v3 than on v2.** It scores a
   completion, not a query. On v2 a bare query scored near zero, so the mistake
   announced itself; on v3 it scores 0.80 against 0.93 for a correct completion

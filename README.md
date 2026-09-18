@@ -48,7 +48,7 @@ A pure-Rust + WebAssembly runtime for [Needle](https://github.com/cactus-compute
   <img src="https://img.shields.io/badge/-Why_this_matters-CE422B?style=flat-square" height="22" alt="Why this matters"/>
 </h2>
 
-Tool calling usually means a paid API round-trip or hundreds of megabytes on disk. This ships the whole agent in **14 MB** and runs it in a browser tab.
+Tool calling usually means a paid API round-trip or hundreds of megabytes on disk. This ships the whole agent in **14 MB** with Needle 2, or 36 MB with Needle 3, and runs it in a browser tab.
 
 <table>
 <thead>
@@ -80,7 +80,7 @@ nothing depends on a file name.
 | Container | `needle3.cact`, **35.3 MB** | `needle2.cact`, 13.7 MB | `.safetensors` + vocab, 22.3 MB |
 | Context | 8192 | 2048 | 1024 |
 | KV cache, 512-token session | 8.8 MB, or 2.3 MB at int8 | 3.5 MB | — |
-| Reasoning | emits `<think>` first | answers directly | answers directly |
+| Reasoning | `<think>` on essentially every query | `<think>` sometimes | none |
 | Confidence head | ✓ | ✓ | ✗ |
 | Tool retrieval | ✗ | ✓ | ✗ (not in the published weights) |
 | Licence | Apache-2.0 | MIT | MIT |
@@ -197,28 +197,31 @@ One `abi3` wheel covers every CPython ≥ 3.8.
 
 <!-- ────────────────────────────────────────────────── -->
 <h2 id="versions">
-  <img src="https://img.shields.io/badge/-The_two_models-CE422B?style=flat-square" height="22" alt="The two models"/>
+  <img src="https://img.shields.io/badge/-The_three_models-CE422B?style=flat-square" height="22" alt="The three models"/>
 </h2>
 
-Upstream replaced v1's encoder–decoder with a decoder-only architecture in a new container. They share no weights, loader, or quantisation scheme, so `needle-rs` implements both rather than migrating.
+Upstream replaced v1's encoder–decoder with a decoder-only architecture in a new container, then rebuilt that again for v3 — hybrid local/global attention, a causal convolution over Q/K/V, five Engram sites and a reasoning step. No two generations share weights, loader or quantisation scheme, so `needle-rs` implements all three rather than migrating.
 
 <table>
-<thead><tr><th align="left"></th><th align="left">Needle v2</th><th align="left">Needle v1</th></tr></thead>
+<thead><tr><th align="left"></th><th align="left">Needle v3</th><th align="left">Needle v2</th><th align="left">Needle v1</th></tr></thead>
 <tbody>
-<tr><td>Parameters</td><td>45M</td><td>26M</td></tr>
-<tr><td>Architecture</td><td>decoder-only; mHC lanes, Engram memory, HadamardMLP</td><td>encoder–decoder SAN</td></tr>
-<tr><td>Weights</td><td>Cactus-Quants, ~2.2 bits effective</td><td>symmetric INT4</td></tr>
-<tr><td>Files</td><td><b>one</b> <code>.cact</code> — 13.7 MB</td><td>22 MB + 122 KB vocabulary</td></tr>
-<tr><td>Tokenizer</td><td>embedded in the container</td><td>separate file</td></tr>
-<tr><td>Reasoning trace</td><td>✓ <code>&lt;think&gt;</code></td><td>—</td></tr>
-<tr><td>Constrained decoding</td><td>optional</td><td>always on</td></tr>
-<tr><td>Sampling</td><td>✓ temperature + seed</td><td>greedy only</td></tr>
-<tr><td>Confidence head</td><td>✓</td><td>—</td></tr>
-<tr><td>Tool retrieval head</td><td>✓ 128-d</td><td>✓</td></tr>
+<tr><td>Parameters</td><td>121M</td><td>45M</td><td>26M</td></tr>
+<tr><td>Architecture</td><td>decoder-only; hybrid local/global attention, QKV conv, 5 Engram sites</td><td>decoder-only; mHC lanes, Engram memory, HadamardMLP</td><td>encoder–decoder SAN</td></tr>
+<tr><td>Weights</td><td>Cactus-Quants, ~2.2 bits effective</td><td>Cactus-Quants, ~2.2 bits effective</td><td>symmetric INT4</td></tr>
+<tr><td>Files</td><td><b>one</b> <code>.cact</code> — 35.3 MB</td><td><b>one</b> <code>.cact</code> — 13.7 MB</td><td>22 MB + 122 KB vocabulary</td></tr>
+<tr><td>Context</td><td>8192</td><td>2048</td><td>1024</td></tr>
+<tr><td>Tokenizer</td><td>embedded in the container</td><td>embedded in the container</td><td>separate file</td></tr>
+<tr><td>Reasoning trace</td><td>✓ <code>&lt;think&gt;</code> before the call</td><td>—</td><td>—</td></tr>
+<tr><td>Constrained decoding</td><td>optional</td><td>optional</td><td>always on</td></tr>
+<tr><td>Sampling</td><td>✓ temperature + seed</td><td>✓ temperature + seed</td><td>greedy only</td></tr>
+<tr><td>Confidence head</td><td>✓</td><td>✓</td><td>—</td></tr>
+<tr><td>Tool retrieval head</td><td>—</td><td>✓ 128-d</td><td>✓ <sub>not in the published weights</sub></td></tr>
+<tr><td>Quantised KV cache</td><td>✓ <code>--kv-int8</code></td><td>—</td><td>—</td></tr>
+<tr><td>Weights licence</td><td>Apache-2.0</td><td>MIT</td><td>MIT</td></tr>
 </tbody>
 </table>
 
-Every example in [`examples/`](examples/) runs on both.
+Every example in [`examples/`](examples/) runs on all three.
 
 <br/>
 
@@ -231,7 +234,7 @@ Every example in [`examples/`](examples/) runs on both.
 <thead><tr><th align="left">Target</th><th align="center">Status</th><th align="right">Binary</th></tr></thead>
 <tbody>
 <tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>537 KB</code> <sub>162 KB over the wire</sub></td></tr>
-<tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>601 KB</code></td></tr>
+<tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>765 KB</code></td></tr>
 <tr><td>Python <sub>(abi3 wheel, CPython ≥ 3.8)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
 <tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v3_*</code> + <code>needle_v2_*</code> + <code>needle_*</code></td></tr>
 <tr><td><code>no_std</code> embedded <sub>(Rust)</sub></td><td align="center">✓</td><td align="right"><sub>size varies</sub></td></tr>
@@ -259,11 +262,11 @@ Cactus's own engine targets mobile and NPUs with hand-tuned ARM SIMD. `needle-rs
 </tr>
 <tr>
 <td valign="top" align="center"><sub>3</sub></td>
-<td valign="top"><b>The KV cache is a ring.</b> v2 attends over a 256-token window, so the cache holds 256 positions rather than <code>max_seq_len</code> — 14 MB instead of 113 MB.</td>
+<td valign="top"><b>The KV cache is a ring.</b> v2 attends over a 256-token window, so the cache holds 256 positions rather than <code>max_seq_len</code> — 14 MB instead of 113 MB. v3 mixes local and global layers, so its ring is per-layer; <code>--kv-int8</code> stores it at the width the container declares, taking a full-context session from 42.0 MB to 11.2 MB.</td>
 </tr>
 <tr>
 <td valign="top" align="center"><sub>4</sub></td>
-<td valign="top"><b>Probe heads stream.</b> Confidence and retrieval pool over every layer's activations at every position — 117 MB if materialised. An online softmax reaches the same result in 16 KB.</td>
+<td valign="top"><b>Probe heads stream.</b> Confidence and retrieval pool over every layer's activations at every position — 117 MB if materialised on v2, 504 MB on v3 at full context. An online softmax reaches the same result in 16 KB and 252 KB.</td>
 </tr>
 <tr>
 <td valign="top" align="center"><sub>5</sub></td>
@@ -280,7 +283,19 @@ Architecture deep-dive: [ARCHITECTURE.md](ARCHITECTURE.md) · v2 port record: [d
   <img src="https://img.shields.io/badge/-Parity-7EE787?style=flat-square" height="22" alt="Parity"/>
 </h2>
 
-The failure mode for a from-scratch reimplementation is silent drift: output that looks right but diverges in the third decimal, producing rare and untraceable bugs. Both engines are held to the reference implementation's exact output.
+The failure mode for a from-scratch reimplementation is silent drift: output that looks right but diverges in the third decimal, producing rare and untraceable bugs. All three engines are held to the reference implementation's exact output.
+
+**Needle v3** — verified against upstream's own model, with the tensor canon pinned by inverting `export._tensors`, since the container's directory is nameless and positional and per-tensor checks alone cannot catch a reordering:
+
+| What | Result |
+|---|---|
+| Forward pass, 57 positions | max relative deviation **9.0e-6**, **zero** argmax mismatches |
+| Incremental decode vs prefill | **bit-identical** (0.000e0) |
+| Container: 581 tensors, 196-byte header, codebook | field-for-field match |
+| Tokenizer, embedded SentencePiece | exact ids vs `sentencepiece` |
+| Engram hash indices | exact as integers |
+| Components: MLP **5.4e-6**, attention **2.7e-6**, confidence **2e-6** | — |
+| int8 KV cache vs upstream `fake_quant` | exact, and prefill stays bit-identical to decode |
 
 **Needle v2** — verified against upstream's own `decode.forward_cached` running the same weights, reconstructed from the shipped container by [`tools/cact_params.py`](tools/cact_params.py):
 
@@ -295,7 +310,9 @@ The failure mode for a from-scratch reimplementation is silent drift: output tha
 
 **Needle v1** — 560 generated examples across five tool-name conventions, 0–8 parameters, 1–20 tools: **560/560 token-exact**.
 
-Fixtures are committed, so the contract is version-pinned and reproducible without re-running Python. 253 Rust tests and 36 WASM binding assertions run in CI, in both the default and `parallel` feature configurations.
+Fixtures are committed, so the contract is version-pinned and reproducible without re-running Python. 341 Rust tests and 94 WASM binding assertions run in CI, in both the default and `parallel` feature configurations, alongside the C ABI and Python wheel.
+
+A measured caution: the reference config ships `dtype="bfloat16"`, and a correct implementation scores **9.7** relative error against a bfloat16 oracle. Every figure above is against an f32 reference — see [docs/v3-port-record.md](docs/v3-port-record.md).
 
 <br/>
 
@@ -304,7 +321,7 @@ Fixtures are committed, so the contract is version-pinned and reproducible witho
   <img src="https://img.shields.io/badge/-Benchmarks-CE422B?style=flat-square" height="22" alt="Benchmarks"/>
 </h2>
 
-Needle v2 on an Apple M5 Max, steady state. Against the Python/JAX reference on the **same machine and the same weights**:
+Apple M5 Max, steady state, threaded — which is what the CLI, Python and C crates build. **Needle v2** against the Python/JAX reference on the **same machine and the same weights**:
 
 | | needle-rs | Python / JAX |
 |---|---|---|
@@ -313,6 +330,8 @@ Needle v2 on an Apple M5 Max, steady state. Against the Python/JAX reference on 
 | Prefill | 1.60 ms/token | **0.51 ms/token** |
 | Session memory | **~23 MB** | — |
 | Runtime dependencies | **0** | 4 |
+
+**Needle v3** carries 121M parameters against v2's 45M, so it costs roughly 2–3× per token — 10 ms to load, 4.20 ms/token prefill and 8.65 ms/token decode. A 100-token prompt answers in about 700 ms, 424 ms of it to first token. That is the trade v3 asks for, and the reason v2 is not deprecated.
 
 Decode is **1.35× faster** and cold start about **50×** faster; prefill is slower, because the reference multiplies dense f32 weights while this runs from 2-bit packed ones. On a single query the two cross at **48 generated tokens** — faster above, slower below, and faster at any length on a cold process.
 
@@ -396,5 +415,5 @@ And this runtime, if it is relevant to what you are reporting:
 <br/>
 
 <div align="center">
-  <sub>MIT — see <a href="LICENSE">LICENSE</a>. Model and weights by <a href="https://github.com/cactus-compute">Cactus Compute</a>, also MIT.</sub>
+  <sub>needle-rs is MIT — see <a href="LICENSE">LICENSE</a> and <a href="NOTICE">NOTICE</a>. The models are by <a href="https://github.com/cactus-compute">Cactus Compute</a> under their own terms: Needle 3 Apache-2.0, Needle 2 and 1 MIT.</sub>
 </div>

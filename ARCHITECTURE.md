@@ -33,16 +33,16 @@ Directory names and published names differ where crates.io required it:
 both belong to unrelated projects. `needle-wasm` and `needle-python` set
 `publish = false`: they ship through npm and PyPI, not crates.io.
 
-Two model generations are implemented side by side. They share the crate layout,
-the norm/RoPE/attention primitives, and the constrained decoder, and share nothing
-else — different weights, containers, and quantisation schemes:
+Three model generations are implemented side by side. They share the crate
+layout, the norm/RoPE/attention primitives, and the constrained decoder, and
+share nothing else — different weights, containers, and quantisation schemes:
 
-| | Needle v1 | Needle v2 |
-|---|---|---|
-| Kernels | `quant.rs` (INT4) | `cq.rs`, `hadamard.rs` |
-| Model | `model.rs`, `layers.rs` | `v2/model.rs`, `v2/batch.rs`, `v2/heads.rs` |
-| Container | `safetensors.rs` + `tokenizer.rs` | `cact.rs` + `sp_tokenizer.rs` |
-| Engine | `engine.rs` | `v2_engine.rs` |
+| | Needle v1 | Needle v2 | Needle v3 |
+|---|---|---|---|
+| Kernels | `quant.rs` (INT4) | `cq.rs`, `hadamard.rs` | `cq.rs`, `v3/kernels.rs` |
+| Model | `model.rs`, `layers.rs` | `v2/model.rs`, `v2/batch.rs`, `v2/heads.rs` | `v3/model.rs`, `v3/attention.rs`, `v3/engram.rs`, `v3/mhc.rs`, `v3/cache.rs`, `v3/heads.rs` |
+| Container | `safetensors.rs` + `tokenizer.rs` | `cact.rs` + `sp_tokenizer.rs` | `cact.rs` (`CactV3`) + `sp_tokenizer.rs` |
+| Engine | `engine.rs` | `v2_engine.rs` | `v3_engine.rs` |
 
 MSRV is 1.87, set by `usize::is_multiple_of`.
 
@@ -357,7 +357,7 @@ wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
 
 ## Parity testing
 
-Both engines are compared against the Python/JAX reference. Every fixture
+All three engines are compared against the Python/JAX reference. Every fixture
 generator lives in `tools/`, and each suite skips with a printed notice when its
 inputs are absent, so a fresh clone runs `cargo test` clean.
 
@@ -382,7 +382,14 @@ wrong slot and every per-tensor comparison still pass.
 | `v2_heads_parity.rs` | contrastive 1.4e-6, confidence 7.2e-5 |
 | `v2_batch_parity.rs` | batched prefill bit-identical to sequential |
 | `v2_constrained.rs` | payloads confined to the declared schema |
-| `node_e2e_v2.js` | the WASM surface, both versions |
+| `node_e2e_v2.js` | the WASM surface, v2 and v1 |
+| `v3_forward_parity.rs` | v3 forward 9.0e-6, decode bit-identical to prefill |
+| `v3_component_parity.rs` | v3 MLP 5.4e-6, attention 2.7e-6, Engram exact |
+| `cact_v3_parity.rs` | the 196-byte header and all 581 directory records |
+| `v3_kv_quant_parity.rs` | int8 KV against upstream `fake_quant`, exactly |
+| `v3_kv_int8.rs` | the quantised cache saves the memory it claims |
+| `v3_statelessness.rs` | nothing survives between calls on a shared engine |
+| `node_e2e_v3.js` | the WASM surface, v3 |
 
 `v2_e2e_parity.rs` is the acceptance gate for invasive changes: it caught both
 write-ordering bugs introduced by the KV ring before release.

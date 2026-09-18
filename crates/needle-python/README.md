@@ -17,7 +17,7 @@ import takes, and it pulls in no Python ML dependencies at all.
 This is the Python binding for
 [needle-rs](https://github.com/Geekgineer/needle-rs), a pure-Rust runtime for
 [Cactus Compute's](https://github.com/cactus-compute/needle) Needle tool-calling
-models. Both model generations are supported, and output is verified token-exact
+models. All three model generations are supported, and output is verified token-exact
 against the upstream JAX reference.
 
 ```bash
@@ -80,8 +80,10 @@ a progress view and the **returned** string is the answer.
 
 ## Tool retrieval
 
-Both versions carry a contrastive head for narrowing a large catalogue before
-routing. Embeddings are L2-normalised, so similarity is a plain dot product.
+Needle 2 and Needle 1 carry a contrastive head for narrowing a large catalogue
+before routing. Embeddings are L2-normalised, so similarity is a plain dot
+product. **Needle 3 does not** — it exports a confidence head and nothing else,
+so `V3Engine` has no `retrieve_tools`.
 
 ```python
 engine.retrieve_tools(
@@ -117,9 +119,11 @@ cact = hf_hub_download("Cactus-Compute/needle2", "needle2.cact")
 
 ## Credit and license
 
-MIT. The **models** — architecture, training and weights — are the work of
-[Cactus Compute](https://github.com/cactus-compute/needle) and are also MIT. If
-you publish work using them, please cite Needle 2
+This package is MIT. The **models** — architecture, training and weights — are
+the work of [Cactus Compute](https://github.com/cactus-compute/needle) and carry
+their own terms: Needle 3's weights are **Apache-2.0**, Needle 2's and Needle
+1's are MIT, and the upstream repository is Apache-2.0. Check the licence on the
+generation you ship. If you publish work using them, please cite Needle
 ([arXiv:2607.18363](https://arxiv.org/abs/2607.18363)); the entry is in the
 [repository README](https://github.com/Geekgineer/needle-rs#citation).
 

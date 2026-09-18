@@ -172,7 +172,7 @@ jobs:
               "repository": {"type": "git", "url": "git+https://github.com/geekgineer/needle-rs.git"},
               "homepage": "https://github.com/geekgineer/needle-rs",
               "keywords": ["wasm","webassembly","ai","llm","tool-calling","function-calling","transformer","rust","no-backend","browser-ai","needle","on-device","edge-ai"],
-              "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts","README.md","LICENSE"],
+              "files": ["needle_wasm_bg.wasm","needle_wasm_bg.wasm.d.ts","needle_wasm.js","needle_wasm.d.ts","README.md","LICENSE","NOTICE"],
               "module": "needle_wasm.js",
               "types": "needle_wasm.d.ts",
               "exports": {".": {"import": "./needle_wasm.js","types": "./needle_wasm.d.ts"}},
@@ -190,6 +190,7 @@ jobs:
           # the JS API rather than the Rust workspace.
           cp crates/needle-wasm/README.md pkg/README.md
           cp LICENSE pkg/LICENSE
+          cp NOTICE  pkg/NOTICE
           # A package published with a relative-link README renders broken on
           # npmjs.com, and a published version cannot be corrected in place.
           if grep -qE '\]\(\./|src="assets/|\]\(assets/|\]\(examples/|\]\(LICENSE' pkg/README.md; then

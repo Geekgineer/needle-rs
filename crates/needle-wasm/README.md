@@ -196,9 +196,11 @@ Full guide: [docs/wasm-integration.md](https://github.com/Geekgineer/needle-rs/b
 
 ## Credit and license
 
-MIT. The **models** — architecture, training and weights — are the work of
-[Cactus Compute](https://github.com/cactus-compute/needle) and are also MIT. If
-you publish work using them, please cite Needle 2
+This package is MIT. The **models** — architecture, training and weights — are
+the work of [Cactus Compute](https://github.com/cactus-compute/needle) and carry
+their own terms: Needle 3's weights are **Apache-2.0**, Needle 2's and Needle
+1's are MIT, and the upstream repository is Apache-2.0. Check the licence on the
+generation you ship. If you publish work using them, please cite Needle
 ([arXiv:2607.18363](https://arxiv.org/abs/2607.18363)); the entry is in the
 [repository README](https://github.com/Geekgineer/needle-rs#citation).
 

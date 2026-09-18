@@ -64,7 +64,7 @@
   <!-- Sub-tagline -->
   <text x="313" y="242"
         font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-        font-size="16" font-weight="400" fill="#7D8590">Pure-Rust runtime for Cactus's Needle v1 and v2 — browsers, edge workers, CLIs, Python, no_std embedded.</text>
+        font-size="16" font-weight="400" fill="#7D8590">Pure-Rust runtime for Cactus's Needle v3, v2 and v1 — browsers, edge workers, CLIs, Python, <tspan font-family="ui-monospace, monospace" font-size="15">no_std</tspan>.</text>
 
   <!-- Stat cards along the bottom -->
   <!-- Card 1: WASM runtime size -->
@@ -94,7 +94,7 @@
     <rect width="180" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
     <text x="16" y="28"
           font-family="ui-monospace, monospace"
-          font-size="22" font-weight="600" fill="#E6EDF3">v1 · v2<tspan fill="#7D8590">+</tspan> v3</text>
+          font-size="22" font-weight="600" fill="#E6EDF3">v3 <tspan fill="#7D8590">·</tspan> v2 <tspan fill="#7D8590">·</tspan> v1</text>
     <text x="16" y="46"
           font-family="ui-monospace, monospace" font-size="10" font-weight="500"
           fill="#6E7681" letter-spacing="1.5">ALL THREE SUPPORTED</text>
@@ -102,7 +102,7 @@
 
   <!-- Card 4: parity with the reference -->
   <g transform="translate(880, 274)">
-    <rect width="220" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
+    <rect width="190" height="58" rx="8" fill="#161B22" stroke="#21262D" stroke-width="1"/>
     <text x="16" y="28"
           font-family="ui-monospace, monospace"
           font-size="22" font-weight="600" fill="#7EE787">9.0e-6</text>

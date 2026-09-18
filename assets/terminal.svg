@@ -1,15 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" width="1200" height="500" role="img"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 516" width="1200" height="516" role="img"
      aria-label="A needle-rs terminal session: Needle v3 reasoning before a tool call, the same query with the int8 cache, then Needle v2 and v1 from the same binary">
   <defs>
     <linearGradient id="titlebar" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#21262D"/>
       <stop offset="100%" stop-color="#161B22"/>
     </linearGradient>
-    <clipPath id="round"><rect width="1200" height="500" rx="12"/></clipPath>
+    <clipPath id="round"><rect width="1200" height="516" rx="12"/></clipPath>
   </defs>
 
   <g clip-path="url(#round)">
-    <rect width="1200" height="500" fill="#0D1117"/>
+    <rect width="1200" height="516" fill="#0D1117"/>
     <rect width="1200" height="40" fill="url(#titlebar)"/>
     <circle cx="24" cy="20" r="6" fill="#FF5F57"/>
     <circle cx="46" cy="20" r="6" fill="#FEBC2E"/>
@@ -18,14 +18,14 @@
           font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace"
           font-size="12" fill="#7D8590">needle-rs — local tool calling, no server</text>
   </g>
-  <rect width="1200" height="500" rx="12" fill="none" stroke="#21262D" stroke-width="1"/>
+  <rect width="1200" height="516" rx="12" fill="none" stroke="#21262D" stroke-width="1"/>
 
   <g font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace" font-size="15">
     <!-- Needle v3: one file -->
     <text x="28" y="76" fill="#6E7681">
       <tspan fill="#7EE787">$</tspan> hf download Cactus-Compute/needle3 needle3.cact <tspan fill="#6E7681">--local-dir weights/</tspan>
     </text>
-    <text x="28" y="100" fill="#7D8590">needle3.cact  35.3 MB   <tspan fill="#6E7681">weights + geometry + tokenizer, one file</tspan></text>
+    <text x="28" y="100" xml:space="preserve" fill="#7D8590">needle3.cact   35.3 MB   <tspan fill="#6E7681">weights + geometry + tokenizer, one file</tspan></text>
 
     <!-- v3 reasons before it answers -->
     <text x="28" y="140" fill="#C9D1D9">
@@ -59,8 +59,8 @@
   <!-- One flowing text element rather than hand-placed items: renderers
        substitute monospace fonts of very different widths, and fixed x
        positions overflow the viewBox on the wide ones. -->
-  <text x="28" y="470" font-family="ui-monospace, monospace" font-size="12" fill="#6E7681">v3: 10 ms load &#183; 8.7 ms/token decode &#183; 2.3 MB cache at int8 &#183; 0 runtime dependencies</text>
-  <text x="28" y="490" font-family="ui-monospace, monospace" font-size="11" fill="#484F58">
+  <text x="28" y="474" font-family="ui-monospace, monospace" font-size="12" fill="#6E7681">v3: 10 ms load &#183; 8.7 ms/token decode &#183; 2.3 MB cache at int8 &#183; 0 runtime dependencies</text>
+  <text x="28" y="496" font-family="ui-monospace, monospace" font-size="11" fill="#484F58">
     Apple M5 Max, steady state. Output is a real session; see BENCHMARKS.md for method.
   </text>
 </svg>
