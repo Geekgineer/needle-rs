@@ -112,3 +112,46 @@ fn carries_the_v3_special_tokens() {
     }
     println!("v3 special tokens resolve, including <think> and <extract>");
 }
+
+/// Every id the encoder can emit must index the embedding table.
+///
+/// v2 carries this as `every_encoded_id_is_in_range`; v3 did not. An id past
+/// `vocab_size` is not a tokenizer bug that stays in the tokenizer — it is an
+/// out-of-bounds row read in the embedding lookup, which `clamp_token` now
+/// absorbs silently. Catching it here keeps that guard from hiding a real
+/// decoding fault.
+#[test]
+fn every_encoded_id_is_in_range() {
+    let Some((t, _)) = fixtures() else { return };
+    let vocab = t.vocab_size() as u32;
+
+    // Ordinary prose, the chat markers, scripts the byte fallback has to
+    // handle, and bytes that are not valid text in any language.
+    let samples = [
+        "What's the weather in Paris?",
+        "<|im_start|>user\nhello<|im_end|>",
+        "<tool_call>[{\"name\":\"x\",\"arguments\":{}}]</tool_call>",
+        "日本語のテキストとひらがな",
+        "Ελληνικά, кириллица, العربية",
+        "🌦️🛰️👩‍👩‍👧‍👦",
+        "\u{0}\u{1}\u{7f}\u{feff}",
+        "                    ",
+        "",
+    ];
+
+    let mut n = 0usize;
+    for s in samples {
+        let ids = t.encode(s);
+        for &id in &ids {
+            assert!(
+                id < vocab,
+                "encode({s:?}) produced id {id}, outside a vocabulary of {vocab}"
+            );
+        }
+        n += ids.len();
+    }
+    println!(
+        "{n} ids across {} samples, all below {vocab}",
+        samples.len()
+    );
+}

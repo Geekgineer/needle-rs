@@ -406,7 +406,8 @@ char *needle_v3_generate(NeedleV3Handle *handle,
                          size_t         max_new_tokens,
                          float          temperature,
                          uint64_t       seed,
-                         bool           constrain);
+                         bool           constrain,
+                         bool           kv_int8);
 
 /**
  * Generate, invoking cb(piece, userdata) with each decoded delta.
@@ -446,7 +447,7 @@ bool needle_v3_confidence_for(NeedleV3Handle *handle,
  * Exposed because the caller usually owns the memory budget. Counts the cache
  * only; the packed weights are a separate fixed cost.
  */
-size_t needle_v3_kv_bytes(NeedleV3Handle *handle, size_t seq_len);
+size_t needle_v3_kv_bytes(NeedleV3Handle *handle, size_t seq_len, bool kv_int8);
 
 /** Context limit in tokens. */
 size_t needle_v3_max_seq_len(NeedleV3Handle *handle);

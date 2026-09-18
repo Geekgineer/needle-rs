@@ -40,6 +40,17 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
   `needle_v3_*` (C ABI, 12 entry points).
 - **`kv_bytes(seq_len)`** on the WASM, C and Python surfaces, because on those
   the caller usually owns the memory budget.
+- **int8 key/value cache** — `kv_precision` on `V3Options`, `--kv-int8` on the
+  CLI, and a `kv_int8` flag on the WASM, C and Python `generate`. This is the
+  width the container declares in `kv_bits`, quantised exactly as upstream's
+  `a8_fake_quant_kv` does, per head, query included. Full context drops from
+  42.3 MB of cache to 11.5 MB; a 512-token session from 8.8 MB to 2.3 MB. All
+  three test queries produce byte-identical tool calls, and batched prefill
+  stays bit-identical to stepped decode under it. Opt-in: `F32` remains the
+  default because it is the path verified against the reference.
+- **`kv_bytes_at(seq_len, precision)`**, and `kv_bytes_int8` on WASM, so a
+  caller sizing a budget gets the figure for the cache it will actually
+  allocate. Asserted against the real allocation rather than derived on paper.
 
 ### Changed
 

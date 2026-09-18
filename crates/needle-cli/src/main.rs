@@ -1,6 +1,6 @@
 use needle_infer::cact::{TAG, TAG_V3};
 use needle_infer::v2_engine::{GenerateOptions, V2Engine};
-use needle_infer::v3_engine::{V3Engine, V3Options};
+use needle_infer::v3_engine::{KvPrecision, V3Engine, V3Options};
 use needle_infer::NeedleEngine;
 use std::env;
 use std::io::Write as IoWrite;
@@ -30,6 +30,7 @@ Options:
   --system <TEXT>     System message (v2 only)
   --json              Print only the tool-call payload, not the full text (v2 only)
   --constrain         Restrict the tool-call payload to the declared schema (v3, v2)
+  --kv-int8           Store the KV cache as int8: ~1/4 the memory (v3)
   --prefill-chunk <N> Positions per batched-prefill chunk; 0 prefills one at a
                       time (v2 only, default 64)
   --help              Print this message
@@ -47,6 +48,7 @@ struct Opts {
     stream: bool,
     json_only: bool,
     constrain: bool,
+    kv_int8: bool,
     prefill_chunk: Option<usize>,
     max_tokens: Option<usize>,
     temperature: Option<f32>,
@@ -74,6 +76,7 @@ fn parse_args() -> Opts {
         stream: false,
         json_only: false,
         constrain: false,
+        kv_int8: false,
         prefill_chunk: None,
         max_tokens: None,
         temperature: None,
@@ -87,6 +90,7 @@ fn parse_args() -> Opts {
             "--stream" => o.stream = true,
             "--json" => o.json_only = true,
             "--constrain" => o.constrain = true,
+            "--kv-int8" => o.kv_int8 = true,
             "--prefill-chunk" => {
                 let v = take(&raw, &mut i, "--prefill-chunk");
                 o.prefill_chunk = Some(
@@ -185,6 +189,11 @@ fn run_v3(o: &Opts, model: &str) {
         seed: o.seed.unwrap_or(0),
         system: o.system.clone(),
         constrain: o.constrain,
+        kv_precision: if o.kv_int8 {
+            KvPrecision::Int8
+        } else {
+            KvPrecision::F32
+        },
     };
 
     let result = if o.stream {
@@ -271,6 +280,7 @@ fn run_v1(o: &Opts, model: &str) {
         ("--system", o.system.is_some()),
         ("--json", o.json_only),
         ("--constrain", o.constrain),
+        ("--kv-int8", o.kv_int8),
         ("--prefill-chunk", o.prefill_chunk.is_some()),
     ] {
         if set {

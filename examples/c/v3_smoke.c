@@ -17,7 +17,7 @@ int main(void) {
 
     printf("  max_seq_len = %zu, kv_bytes(512) = %.1f MB\n",
            needle_v3_max_seq_len(h),
-           needle_v3_kv_bytes(h, 512) / 1024.0 / 1024.0);
+           needle_v3_kv_bytes(h, 512, false) / 1024.0 / 1024.0);
     OK(needle_v3_max_seq_len(h) == 8192, "max_seq_len reports the context limit");
     OK(needle_v3_has_confidence(h), "confidence head present");
 
@@ -39,7 +39,7 @@ int main(void) {
     printf("  confidence: completion %.4f, bare query %.4f\n", p_right, p_bare);
     OK(p_right > p_bare, "the real completion outscores a bare query");
 
-    char *bound = needle_v3_generate(h, q, tools, 0, 0.0f, 0, true);
+    char *bound = needle_v3_generate(h, q, tools, 0, 0.0f, 0, true, false);
     OK(bound && strstr(bound, "get_weather"), "constrained generate still answers");
     if (bound) needle_free_str(bound);
 
@@ -50,7 +50,7 @@ int main(void) {
     /* Null handling must not crash. */
     needle_v3_free(NULL);
     OK(needle_v3_load("nope.cact") == NULL, "a missing file returns NULL");
-    OK(needle_v3_kv_bytes(NULL, 1) == 0, "a null handle reports zero");
+    OK(needle_v3_kv_bytes(NULL, 1, false) == 0, "a null handle reports zero");
 
     printf("\n%s\n", fails ? "FAILED" : "all C ABI checks passed");
     return fails ? 1 : 0;

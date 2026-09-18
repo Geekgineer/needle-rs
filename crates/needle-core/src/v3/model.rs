@@ -16,9 +16,9 @@ use crate::math::{cos, sin, sqrt};
 use crate::norm::zc_rms_norm_vec;
 use crate::ops::sigmoid;
 use crate::v3::attention::{
-    attend, attend_step, causal_depthwise_conv, norm_and_rope, AttnDims, Ring,
+    attend, attend_step, causal_depthwise_conv, norm_and_rope, AttnDims, KvStore, Ring,
 };
-use crate::v3::cache::{Qkv, V3Cache};
+use crate::v3::cache::{fake_quant_vec, quantize_rows, KvPrecision, Qkv, V3Cache};
 
 /// Positions per batched-prefill chunk.
 pub const DEFAULT_CHUNK: usize = 64;
@@ -89,6 +89,20 @@ pub struct V3Model {
     pub final_norm: Vec<f32>,
     pub perms: HadaPerms,
     embed_scale: f32,
+}
+
+/// Apply upstream's per-head 8-bit activation quantisation in place, across
+/// `seq` positions of a `heads * head_dim` row.
+///
+/// This is `a8_fake_quant_kv` — `fake_quant(x, x.shape[-1], 8)` — which
+/// upstream applies to the query, the keys and the values alike.
+fn quant_rows(x: &mut [f32], seq: usize, heads: usize, head_dim: usize) {
+    for t in 0..seq {
+        for h in 0..heads {
+            let o = (t * heads + h) * head_dim;
+            fake_quant_vec(&mut x[o..o + head_dim], 8);
+        }
+    }
 }
 
 impl V3Model {
@@ -272,24 +286,25 @@ impl V3Model {
             );
             let _ = half;
 
+            if let KvPrecision::Int8 = cache.precision() {
+                // `write_kv` quantises the keys and values; the query is the
+                // other half of upstream's quantised attention.
+                quant_rows(&mut q, 1, cfg.num_heads, cfg.qk_head_dim);
+            }
             cache.write_kv(li, pos, &k, &v);
             let (lo, hi) = cache.span(li, pos);
             let slots = cache.slots(li);
-            {
-                let (kb, vb) = cache.kv(li);
-                attend_step(
-                    &q,
-                    Ring {
-                        k: kb,
-                        v: vb,
-                        slots,
-                        lo,
-                        hi,
-                    },
-                    dims,
-                    &mut attn,
-                );
-            }
+            attend_step(
+                &q,
+                Ring {
+                    kv: cache.kv(li),
+                    slots,
+                    lo,
+                    hi,
+                },
+                dims,
+                &mut attn,
+            );
 
             layer.gate_proj.matvec(&h, &mut gate);
             for (ai, &gi) in attn.iter_mut().zip(gate.iter()) {
@@ -542,6 +557,9 @@ impl V3Model {
         let cfg = &self.cfg;
         let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
         let rows = cfg.logit_rows();
+        let quantised = cache
+            .as_deref()
+            .is_some_and(|c| c.precision() == KvPrecision::Int8);
         let (rc, rs) = self.rope(seq);
         let (ek, ev, ev_raw) = self.engram_kv_with_raw(tokens, cache.is_some());
 
@@ -751,9 +769,25 @@ impl V3Model {
                 cfg.qk_head_dim,
             );
 
+            // Upstream applies `maybe_quant_query` and `maybe_quant_kv` to the
+            // whole batch, immediately after RoPE and before attention — so a
+            // quantised session must attend the *prompt* at 8 bits too. Doing
+            // this only on the decode path would leave prefill reading f32
+            // while decode read int8: a split upstream does not have, and one
+            // that batched prefill would hide, since it never steps a position
+            // the other way.
+            if quantised {
+                quant_rows(&mut q, seq, cfg.num_heads, cfg.qk_head_dim);
+                quant_rows(&mut k, seq, cfg.num_kv_heads, cfg.qk_head_dim);
+                quant_rows(&mut v, seq, cfg.num_kv_heads, cfg.v_head_dim);
+            }
+
             if let Some(c) = cache.as_deref_mut() {
                 // Post-conv, post-norm, post-rope keys and values: exactly what
                 // decode_step will attend against when it continues from here.
+                // Already quantised above when the session is, and `fake_quant`
+                // is idempotent — the absolute maximum is preserved exactly, so
+                // the scale and every rounded integer come out the same.
                 for t in 0..seq {
                     c.write_kv(
                         li,
@@ -769,7 +803,30 @@ impl V3Model {
                 }
             }
 
-            attend(&q, &k, &v, dims, cfg.attention_span(li), &mut attn);
+            // Attend through the same representation the decode path reads.
+            // Quantising and then attending over the dequantised `f32` would
+            // be algebraically identical and numerically not: the stored-int
+            // reader hoists the per-head scale out of the dot product, so a
+            // prefilled session would disagree with a stepped one on the third
+            // decimal of every logit. Building the integers here costs one pass
+            // and makes the two paths bit-identical.
+            let store = if quantised {
+                let (kq, ks) = quantize_rows(&k, cfg.qk_head_dim);
+                let (vq, vs) = quantize_rows(&v, cfg.v_head_dim);
+                Some((kq, ks, vq, vs))
+            } else {
+                None
+            };
+            let kv_store = match &store {
+                Some((kq, ks, vq, vs)) => KvStore::Int8 {
+                    k: kq,
+                    k_scale: ks,
+                    v: vq,
+                    v_scale: vs,
+                },
+                None => KvStore::F32 { k: &k, v: &v },
+            };
+            attend(&q, kv_store, dims, cfg.attention_span(li), &mut attn);
 
             let agate = sigmoid(layer.attn_gate);
             for t in 0..seq {

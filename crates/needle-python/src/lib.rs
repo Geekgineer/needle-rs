@@ -1,6 +1,8 @@
 use needle_infer::engine::NeedleEngine;
 use needle_infer::v2_engine::{GenerateOptions, V2Engine};
-use needle_infer::v3_engine::{extract_tool_call, V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS};
+use needle_infer::v3_engine::{
+    extract_tool_call, KvPrecision, V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS,
+};
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 
@@ -312,7 +314,7 @@ impl PyV3Engine {
     /// Returns a dict: `text`, `tool_call`, `reasoning`, `token_ids`,
     /// `stop_reason`, `positions`.
     #[pyo3(signature = (query, tools_json, max_new_tokens=0, temperature=0.0, seed=0,
-                        system=None, constrain=false))]
+                        system=None, constrain=false, kv_int8=false))]
     #[allow(clippy::too_many_arguments)]
     fn generate<'py>(
         &self,
@@ -324,6 +326,7 @@ impl PyV3Engine {
         seed: u64,
         system: Option<String>,
         constrain: bool,
+        kv_int8: bool,
     ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
         let opts = V3Options {
             max_new_tokens: if max_new_tokens == 0 {
@@ -335,6 +338,11 @@ impl PyV3Engine {
             seed,
             system,
             constrain,
+            kv_precision: if kv_int8 {
+                KvPrecision::Int8
+            } else {
+                KvPrecision::F32
+            },
         };
         let r = self.inner.generate(query, tools_json, &opts);
         let d = pyo3::types::PyDict::new(py);

@@ -12,8 +12,10 @@ pub mod kernels;
 pub mod mhc;
 pub mod model;
 
-pub use attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
-pub use cache::{Qkv, V3Cache};
+pub use attention::{
+    attend, attend_step, causal_depthwise_conv, norm_and_rope, AttnDims, KvStore, Ring,
+};
+pub use cache::{fake_quant_vec, quantize_rows, KvPrecision, Qkv, V3Cache};
 pub use config::{V3Config, V3Engram};
 pub use engram::{engram_indices, ngram_valid, EngramDims};
 pub use heads::{ProbeHead, HEAD_CONFIDENCE, HEAD_EMBEDDING, HEAD_ROUTER};

@@ -118,11 +118,6 @@ workspace; `clippy --all-targets -D warnings` clean.
 
 ## Still open
 
-- **The KV cache stores f32 while the container declares `kv_bits = 8`.**
-  Upstream post-trained this model for an int8 cache, so that is a real 4x on
-  the dominant memory cost — 8.8 MB to 2.2 MB at 512 positions. Not done here
-  because quantising moves numerics off the path verified bit-identical, and it
-  needs its own parity story against the reference's `quant=True` path.
 - **Decode is ~8.3 ms/token and threading does not help it.** Single-position
   matvecs are too small to pay the rayon dispatch, the same finding v2 reached.
   Batching is a prefill technique. Further gains would come from the CQ group
@@ -133,6 +128,78 @@ workspace; `clippy --all-targets -D warnings` clean.
   carries no depth or width field. The shipped `.cact` bakes one configuration.
 - **No contrastive head in v3**, so `retrieve_tools` and `encode_contrastive`
   have no v3 equivalent on any surface.
+
+## The int8 KV cache
+
+The container declares `kv_bits = 8`, and upstream maps `>= 8` to
+`a8_fake_quant_kv` — `fake_quant(x, x.shape[-1], 8)`, per-head symmetric int8.
+Below 8 it maps to `cq_fake_quant_kv` at group 64, a *different* scheme the
+shipped checkpoint was not post-trained for, so only the declared width is
+implemented. `KvPrecision::Int8` is opt-in; `F32` stays the default because it
+is the path verified bit-identical against the reference.
+
+Measured on the shipped checkpoint (`v3_kv_int8`):
+
+| session | f32 cache | int8 cache |
+|---|---|---|
+| 512 tokens | 9.0 MB | 2.6 MB |
+| 2048 tokens | 21.3 MB | 5.9 MB |
+| 8192 tokens (full context) | 42.3 MB | 11.5 MB |
+
+27.2% of f32, not 25%: each stored head vector also carries an `f32` scale.
+`V3Config::kv_bytes_at` reports this and is asserted against the real
+allocation, so the figure a caller budgets from cannot drift from what is
+allocated. All three test queries produce byte-identical tool calls.
+
+Two things here were easy to get wrong and are worth keeping:
+
+- **Upstream quantises the query too.** `maybe_quant_query` sits beside
+  `maybe_quant_kv` in `architecture.py`, both gated on the same `quant` flag,
+  both applied after RoPE and before attention. A KV-only implementation is not
+  the numerics the model was post-trained for.
+- **Both paths must read the same representation.** The first version attended
+  over dequantised `f32` in batched prefill and over stored integers in decode.
+  That is algebraically identical and numerically is not — the integer reader
+  hoists the per-head scale out of the dot product — and it put 3.7e-2 of drift
+  between a prefilled session and a stepped one, against an f32 baseline of
+  exactly zero. Both paths now attend through `KvStore`, and
+  `int8_prefill_agrees_with_int8_stepping` asserts bit-identity rather than a
+  tolerance. Note that the *continuation* test could not see this: the model
+  picked the same 24 tokens either way. Only the logits showed it.
+
+## Parity-test audit (v3 against v2)
+
+Done by diffing the two suites' test-function names rather than from memory.
+Gaps found and closed:
+
+- **Statelessness.** v2 carried four tests (`reset_yields_identical_second_run`,
+  `model_is_stateless_across_sequences`, `shared_state_matches_fresh_state`,
+  `head_runs_do_not_affect_generation`); v3 had none, despite holding more
+  per-session state than v2 — three histories in `V3Cache` plus a pooled probe
+  head. Now `v3_statelessness`, five tests.
+- **Tokenizer id range.** v2's `every_encoded_id_is_in_range` had no v3
+  counterpart. It matters more in v3 because `clamp_token` would absorb an
+  out-of-range id silently. Added to `tokenizer_v3_parity`.
+- **The int8 path**, above: quantiser, stored-integer reader, memory, behaviour
+  and prefill/decode agreement.
+- **CI coverage.** `v3_kv_quant_parity`, `v3_kv_int8` and `v3_statelessness`
+  now run in the `parity-v3` job, the first from tracked vectors needing no
+  container. `v3_kv_int8` also runs threaded, since its exact-equality
+  assertion is what a row-splitting bug breaks.
+
+Deliberately absent, with reasons:
+
+- **No chunked-prefill invariance test** (v2's `result_is_independent_of_
+  prefill_chunk`, `chunk_boundary_does_not_change_the_result`): v3 prefills the
+  whole prompt in one pass and the CLI rejects `--prefill-chunk` for v3. There
+  is no chunk boundary to be invariant to.
+- **No batch-scratch test** (v2's `batch_scratch_is_reusable`): v3 exposes no
+  batch API.
+- **No contrastive/retrieval tests**: v3 exports only a confidence head.
+- **`v3_component_parity` and `v3_forward_parity` are not run in CI** because
+  their fixture ladders are gitignored for size; both skip cleanly. CI exercises
+  the container, tokenizer, e2e, FFI, KV-quantisation and statelessness suites,
+  all from tracked fixtures or the downloaded container.
 
 ## Regenerating the fixtures
 

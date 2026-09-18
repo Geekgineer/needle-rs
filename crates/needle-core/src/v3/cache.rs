@@ -31,12 +31,107 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::math::round;
+use crate::v3::attention::KvStore;
 use crate::v3::config::V3Config;
+
+/// How the key/value cache stores its entries.
+///
+/// The container declares what the model was post-trained for in `kv_bits`.
+/// Needle 3 declares **8**, so [`KvPrecision::Int8`] is the width upstream
+/// intends; `< 8` maps to a different scheme upstream (Cactus-Quants at group
+/// 64) and is not implemented here, because no shipped checkpoint asks for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvPrecision {
+    /// Store as `f32`. Bit-identical to the verified forward pass, and the
+    /// default for that reason.
+    F32,
+    /// Per-head symmetric 8-bit, as upstream's `a8_fake_quant_kv` defines it.
+    ///
+    /// Roughly a quarter of the memory. It is **not** bit-identical to the f32
+    /// path — it is the numerics upstream's native engine runs — so it is
+    /// opt-in rather than default.
+    Int8,
+}
+
+/// Quantise one vector to symmetric `bits`-bit and immediately dequantise,
+/// exactly as upstream's `fake_quant` does with `group_size == x.len()`.
+///
+/// ```text
+/// qmax  = 2^(bits-1) - 1
+/// scale = absmax > 0 ? absmax / qmax : 1
+/// out   = clamp(round(x / scale), -qmax - 1, qmax) * scale
+/// ```
+///
+/// An all-zero vector keeps scale 1 and stays zero, which is why the guard is
+/// on `absmax > 0` rather than on a tolerance.
+pub fn fake_quant_vec(x: &mut [f32], bits: u32) {
+    let (scale, inv, qmax) = quant_scale(x, bits);
+    for v in x.iter_mut() {
+        *v = round(*v * inv).clamp(-qmax - 1.0, qmax) * scale;
+    }
+}
+
+/// The scale `fake_quant_vec` would use, with its reciprocal and `qmax`.
+///
+/// Shared so the stored-integer path and the round-trip reference cannot drift
+/// apart: the parity fixtures pin `fake_quant_vec`, and this is the same
+/// arithmetic.
+fn quant_scale(x: &[f32], bits: u32) -> (f32, f32, f32) {
+    let qmax = ((1u32 << (bits - 1)) - 1) as f32;
+    let mut absmax = 0.0f32;
+    for v in x.iter() {
+        let a = if *v < 0.0 { -*v } else { *v };
+        if a > absmax {
+            absmax = a;
+        }
+    }
+    let scale = if absmax > 0.0 { absmax / qmax } else { 1.0 };
+    (scale, 1.0 / scale, qmax)
+}
+
+/// Quantise `src` into `dst` as stored integers, returning the scale.
+///
+/// `dst[i] as f32 * scale` reproduces exactly what [`fake_quant_vec`] would
+/// have left in place, which is what makes the stored-int8 cache numerically
+/// identical to the round-trip the parity fixtures verify.
+fn quant_into(src: &[f32], dst: &mut [i8]) -> f32 {
+    let (scale, inv, qmax) = quant_scale(src, 8);
+    for (d, v) in dst.iter_mut().zip(src) {
+        *d = round(*v * inv).clamp(-qmax - 1.0, qmax) as i8;
+    }
+    scale
+}
+
+/// Quantise `rows` head-vectors of `head_dim` into stored integers plus one
+/// scale each — the same layout [`V3Cache`] holds internally.
+///
+/// The batched prefill path needs this so it can attend through exactly the
+/// arithmetic [`crate::v3::attend_step`] uses on the stored cache. Attending
+/// over dequantised `f32` instead is algebraically the same and numerically
+/// is not, which would make a prefilled session disagree with a stepped one.
+pub fn quantize_rows(x: &[f32], head_dim: usize) -> (Vec<i8>, Vec<f32>) {
+    let rows = x.len() / head_dim;
+    let mut ints = vec![0i8; x.len()];
+    let mut scales = vec![1.0f32; rows];
+    for (r, scale) in scales.iter_mut().enumerate() {
+        let o = r * head_dim;
+        *scale = quant_into(&x[o..o + head_dim], &mut ints[o..o + head_dim]);
+    }
+    (ints, scales)
+}
 
 /// Per-layer key/value storage.
 struct LayerCache {
+    /// Populated when the precision is `F32`; empty otherwise.
     k: Vec<f32>,
     v: Vec<f32>,
+    /// Populated when the precision is `Int8`; empty otherwise. One `i8` per
+    /// element, plus one `f32` scale per `(slot, kv_head)`.
+    kq: Vec<i8>,
+    vq: Vec<i8>,
+    k_scale: Vec<f32>,
+    v_scale: Vec<f32>,
     /// Ring capacity in positions, grown on demand up to `cap`.
     slots: usize,
     /// The most this layer will ever hold: its window, or `max_seq_len` for a
@@ -52,6 +147,7 @@ struct LayerCache {
 /// Decode state for one session.
 pub struct V3Cache {
     cfg: V3Config,
+    precision: KvPrecision,
     layers: Vec<LayerCache>,
     /// Token ids, kept only as far back as the largest n-gram order needs.
     tokens: Vec<u32>,
@@ -68,6 +164,17 @@ impl V3Cache {
     /// `hint` only sizes the first allocation for global layers — exceeding it
     /// grows rather than fails. Local layers are always exactly their window.
     pub fn new(cfg: &V3Config, hint: usize) -> Self {
+        Self::with_precision(cfg, hint, KvPrecision::F32)
+    }
+
+    /// A cache that stores its keys and values at `precision` from the first
+    /// write.
+    ///
+    /// Precision is fixed at construction because it decides the allocation:
+    /// an `Int8` cache never allocates the `f32` buffers at all, which is the
+    /// entire point. Switching afterwards would either reinterpret what is
+    /// already stored or silently throw it away.
+    pub fn with_precision(cfg: &V3Config, hint: usize, precision: KvPrecision) -> Self {
         let hint = hint.clamp(1, cfg.max_seq_len);
         let taps_tail = cfg.qkv_conv_taps.saturating_sub(1);
         let layers = (0..cfg.num_layers)
@@ -81,9 +188,31 @@ impl V3Cache {
                     None => cfg.max_seq_len,
                 };
                 let slots = hint.min(cap);
+                let int8 = precision == KvPrecision::Int8;
+                let heads = slots * cfg.num_kv_heads;
                 LayerCache {
-                    k: vec![0.0; slots * cfg.k_dim()],
-                    v: vec![0.0; slots * cfg.v_dim()],
+                    k: if int8 {
+                        Vec::new()
+                    } else {
+                        vec![0.0; slots * cfg.k_dim()]
+                    },
+                    v: if int8 {
+                        Vec::new()
+                    } else {
+                        vec![0.0; slots * cfg.v_dim()]
+                    },
+                    kq: if int8 {
+                        vec![0; slots * cfg.k_dim()]
+                    } else {
+                        Vec::new()
+                    },
+                    vq: if int8 {
+                        vec![0; slots * cfg.v_dim()]
+                    } else {
+                        Vec::new()
+                    },
+                    k_scale: if int8 { vec![1.0; heads] } else { Vec::new() },
+                    v_scale: if int8 { vec![1.0; heads] } else { Vec::new() },
                     slots,
                     cap,
                     q_tail: vec![0.0; taps_tail * cfg.q_dim()],
@@ -100,11 +229,16 @@ impl V3Cache {
 
         Self {
             cfg: cfg.clone(),
+            precision,
             layers,
             tokens: Vec::with_capacity(hint),
             engram_tail,
             pos: 0,
         }
+    }
+
+    pub fn precision(&self) -> KvPrecision {
+        self.precision
     }
 
     /// Positions written so far.
@@ -122,7 +256,12 @@ impl V3Cache {
         let per_layer: usize = self
             .layers
             .iter()
-            .map(|l| (l.k.len() + l.v.len() + l.q_tail.len() + l.k_tail.len() + l.v_tail.len()) * 4)
+            .map(|l| {
+                (l.k.len() + l.v.len() + l.k_scale.len() + l.v_scale.len()) * 4
+                    + l.kq.len()
+                    + l.vq.len()
+                    + (l.q_tail.len() + l.k_tail.len() + l.v_tail.len()) * 4
+            })
             .sum();
         let engram: usize = self.engram_tail.iter().map(|t| t.len() * 4).sum();
         per_layer + engram + self.tokens.len() * 4
@@ -151,13 +290,21 @@ impl V3Cache {
     /// between a 2 MB session and a 14 MB one.
     fn ensure(&mut self, li: usize, pos: usize) {
         let (k_dim, v_dim) = (self.cfg.k_dim(), self.cfg.v_dim());
+        let heads = self.cfg.num_kv_heads;
         let layer = &mut self.layers[li];
         if pos < layer.slots || layer.slots >= layer.cap {
             return;
         }
         let want = (layer.slots * 2).max(pos + 1).min(layer.cap);
-        layer.k.resize(want * k_dim, 0.0);
-        layer.v.resize(want * v_dim, 0.0);
+        if layer.kq.is_empty() && layer.vq.is_empty() {
+            layer.k.resize(want * k_dim, 0.0);
+            layer.v.resize(want * v_dim, 0.0);
+        } else {
+            layer.kq.resize(want * k_dim, 0);
+            layer.vq.resize(want * v_dim, 0);
+            layer.k_scale.resize(want * heads, 1.0);
+            layer.v_scale.resize(want * heads, 1.0);
+        }
         layer.slots = want;
     }
 
@@ -199,15 +346,50 @@ impl V3Cache {
     pub fn write_kv(&mut self, li: usize, pos: usize, k: &[f32], v: &[f32]) {
         self.ensure(li, pos);
         let (k_dim, v_dim) = (self.cfg.k_dim(), self.cfg.v_dim());
+        let precision = self.precision;
+        let num_kv_heads = self.cfg.num_kv_heads;
+        let (qk, vh) = (self.cfg.qk_head_dim, self.cfg.v_head_dim);
         let layer = &mut self.layers[li];
         let slot = pos % layer.slots;
-        layer.k[slot * k_dim..(slot + 1) * k_dim].copy_from_slice(k);
-        layer.v[slot * v_dim..(slot + 1) * v_dim].copy_from_slice(v);
+        match precision {
+            KvPrecision::F32 => {
+                layer.k[slot * k_dim..(slot + 1) * k_dim].copy_from_slice(k);
+                layer.v[slot * v_dim..(slot + 1) * v_dim].copy_from_slice(v);
+            }
+            KvPrecision::Int8 => {
+                // One scale per head vector, as upstream's `a8_fake_quant_kv`
+                // defines it. The rounded integers are what is stored; the
+                // dequantisation happens in attention, where the scale factors
+                // out of the dot product.
+                let base = slot * num_kv_heads;
+                for h in 0..num_kv_heads {
+                    let sk = quant_into(
+                        &k[h * qk..(h + 1) * qk],
+                        &mut layer.kq[slot * k_dim + h * qk..slot * k_dim + (h + 1) * qk],
+                    );
+                    layer.k_scale[base + h] = sk;
+                    let sv = quant_into(
+                        &v[h * vh..(h + 1) * vh],
+                        &mut layer.vq[slot * v_dim + h * vh..slot * v_dim + (h + 1) * vh],
+                    );
+                    layer.v_scale[base + h] = sv;
+                }
+            }
+        }
     }
 
-    /// Key and value buffers for layer `li`.
-    pub fn kv(&self, li: usize) -> (&[f32], &[f32]) {
-        (&self.layers[li].k, &self.layers[li].v)
+    /// How layer `li` hands its keys and values to attention.
+    pub fn kv(&self, li: usize) -> KvStore<'_> {
+        let l = &self.layers[li];
+        match self.precision {
+            KvPrecision::F32 => KvStore::F32 { k: &l.k, v: &l.v },
+            KvPrecision::Int8 => KvStore::Int8 {
+                k: &l.kq,
+                k_scale: &l.k_scale,
+                v: &l.vq,
+                v_scale: &l.v_scale,
+            },
+        }
     }
 
     /// Apply the causal conv for one position using the retained raw tail,

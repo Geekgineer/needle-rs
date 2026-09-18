@@ -6,11 +6,11 @@
 //! needle_v3_run(h, query, tools_json)                        -> *char
 //! needle_v3_run_json(h, query, tools_json)                   -> *char  (payload only)
 //! needle_v3_reasoning(h, text)                               -> *char  (may be null)
-//! needle_v3_generate(h, query, tools, max, temp, seed, constrain) -> *char
+//! needle_v3_generate(h, query, tools, max, temp, seed, constrain, kv_int8) -> *char
 //! needle_v3_run_stream(h, query, tools, cb, userdata)        -> *char
 //! needle_v3_has_confidence(h)                                -> bool
 //! needle_v3_confidence_for(h, query, tools, completion, out) -> bool
-//! needle_v3_kv_bytes(h, seq_len)                             -> usize
+//! needle_v3_kv_bytes(h, seq_len, kv_int8)                    -> usize
 //! needle_v3_max_seq_len(h)                                   -> usize
 //! needle_v3_free(h)
 //! ```
@@ -25,7 +25,7 @@
 //! runtime mystery.
 
 use crate::{clear_last_error, set_last_error};
-use needle_infer::v3_engine::{V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS};
+use needle_infer::v3_engine::{KvPrecision, V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -164,6 +164,10 @@ pub unsafe extern "C" fn needle_v3_reasoning(
 
 /// Generate with explicit settings. `max_new_tokens == 0` uses the default.
 ///
+/// `kv_int8` stores the key/value cache at 8 bits — the width the container
+/// declares in `kv_bits` — for roughly a quarter of the memory. Not
+/// bit-identical to the default; see `needle_v3_kv_bytes`.
+///
 /// # Safety
 /// As [`needle_v3_run`].
 #[no_mangle]
@@ -176,6 +180,7 @@ pub unsafe extern "C" fn needle_v3_generate(
     temperature: f32,
     seed: u64,
     constrain: bool,
+    kv_int8: bool,
 ) -> *mut c_char {
     clear_last_error();
     let (Some(h), Some(q), Some(t)) = (handle(handle_ptr), cstr(query), cstr(tools_json)) else {
@@ -191,6 +196,11 @@ pub unsafe extern "C" fn needle_v3_generate(
         seed,
         system: None,
         constrain,
+        kv_precision: if kv_int8 {
+            KvPrecision::Int8
+        } else {
+            KvPrecision::F32
+        },
     };
     out_string(h.engine.generate(q, t, &opts).text)
 }
@@ -284,7 +294,10 @@ pub unsafe extern "C" fn needle_v3_confidence_for(
 /// Key/value cache bytes for a session of `seq_len` positions.
 ///
 /// Exposed because the caller is often the one with the memory budget — an
-/// embedded target deciding whether a session fits at all.
+/// embedded target deciding whether a session fits at all. With `kv_int8`,
+/// reports the cost of the 8-bit cache `needle_v3_generate` takes the same
+/// flag for: 27% of the f32 figure at full context, not a flat quarter,
+/// because each stored head vector carries an `f32` scale.
 ///
 /// # Safety
 /// `handle` must come from `needle_v3_load`.
@@ -292,9 +305,15 @@ pub unsafe extern "C" fn needle_v3_confidence_for(
 pub unsafe extern "C" fn needle_v3_kv_bytes(
     handle_ptr: *mut NeedleV3Handle,
     seq_len: usize,
+    kv_int8: bool,
 ) -> usize {
     clear_last_error();
-    handle(handle_ptr).map_or(0, |h| h.engine.model.cfg.kv_bytes(seq_len, 4))
+    let p = if kv_int8 {
+        KvPrecision::Int8
+    } else {
+        KvPrecision::F32
+    };
+    handle(handle_ptr).map_or(0, |h| h.engine.model.cfg.kv_bytes_at(seq_len, p))
 }
 
 /// Context limit in tokens.

@@ -195,8 +195,20 @@ jobs:
           # cleanly here; these run against the container alone.
           cargo test -p needle-infer --release --test v3_e2e -- --nocapture
           cargo test -p needle-c      --release --test v3_ffi_smoke -- --nocapture
-          # Same suites threaded: row splitting must stay bit-identical.
+          # The KV-quantisation vectors are tracked, so this needs no JAX and
+          # no container: it pins the quantiser against upstream's fake_quant
+          # and the hoisted-scale reader against a dequantised buffer.
+          cargo test -p needle-core   --release --test v3_kv_quant_parity -- --nocapture
+          # These two need the container only. The int8 suite is what proves
+          # the quantised cache saves the memory it claims and that batched
+          # prefill and stepped decode stay bit-identical under it.
+          cargo test -p needle-infer  --release --test v3_kv_int8 -- --nocapture
+          cargo test -p needle-infer  --release --test v3_statelessness -- --nocapture
+          # Same suites threaded: row splitting must stay bit-identical. The
+          # int8 suite is included because its prefill-vs-decode assertion is
+          # exact equality, which is precisely what a threading bug breaks.
           cargo test -p needle-infer --release --features parallel --test v3_e2e -- --nocapture
+          cargo test -p needle-infer --release --features parallel --test v3_kv_int8 -- --nocapture
 
       # The browser demo calls exactly these bindings, so a break shows up here
       # rather than in a deployed page.

@@ -6,6 +6,8 @@
 //! depthwise convolution over Q, K and V.
 
 extern crate alloc;
+
+use crate::v3::cache::KvPrecision;
 use alloc::vec::Vec;
 
 /// Engram placement and table layout.
@@ -149,6 +151,31 @@ impl V3Config {
             total += slots * per_pos * bytes_per;
         }
         total
+    }
+
+    /// Bytes of key/value cache for a session of `seq_len` positions at a
+    /// given storage precision.
+    ///
+    /// Prefer this to [`Self::kv_bytes`] when the answer decides whether a
+    /// session fits: the int8 figure is not simply a quarter, because each
+    /// stored head vector also carries an `f32` scale.
+    pub fn kv_bytes_at(&self, seq_len: usize, precision: KvPrecision) -> usize {
+        match precision {
+            KvPrecision::F32 => self.kv_bytes(seq_len, 4),
+            KvPrecision::Int8 => {
+                let per_pos = self.num_kv_heads * (self.qk_head_dim + self.v_head_dim)
+                    + self.num_kv_heads * 8;
+                let mut total = 0;
+                for layer in 0..self.num_layers {
+                    let slots = match self.attention_span(layer) {
+                        Some(w) => seq_len.min(w),
+                        None => seq_len,
+                    };
+                    total += slots * per_pos;
+                }
+                total
+            }
+        }
     }
 }
 

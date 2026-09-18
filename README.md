@@ -79,15 +79,17 @@ nothing depends on a file name.
 | Parameters | 121M | 45M | 26M |
 | Container | `needle3.cact`, **35.3 MB** | `needle2.cact`, 13.7 MB | `.safetensors` + vocab, 22.3 MB |
 | Context | 8192 | 2048 | 1024 |
-| KV cache, 512-token session | 8.8 MB | 3.5 MB | — |
+| KV cache, 512-token session | 8.8 MB, or 2.3 MB at int8 | 3.5 MB | — |
 | Reasoning | emits `<think>` first | answers directly | answers directly |
 | Confidence head | ✓ | ✓ | ✗ |
 | Tool retrieval | ✗ | ✓ | ✗ (not in the published weights) |
 | Licence | Apache-2.0 | MIT | MIT |
 
 **Pick Needle 3** when quality matters most and you can afford a 35 MB download
-and roughly 9 MB of cache. It reasons before answering, which shows up on
-ambiguous queries and larger tool catalogues.
+and roughly 9 MB of cache — or 2.3 MB with the int8 cache, which is the width
+the container declares and costs nothing in answer quality on our tests. It
+reasons before answering, which shows up on ambiguous queries and larger tool
+catalogues.
 
 **Pick Needle 2** for the smallest viable browser deployment, or when you need
 tool retrieval — v3 exports no contrastive head, so `retrieve_tools` and

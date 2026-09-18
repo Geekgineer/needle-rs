@@ -163,17 +163,25 @@ fn memory_reporting_is_available_before_a_session() {
     unsafe {
         let h = load();
         let max = needle_v3_max_seq_len(h);
-        let short = needle_v3_kv_bytes(h, 512);
-        let long = needle_v3_kv_bytes(h, 4096);
+        let short = needle_v3_kv_bytes(h, 512, false);
+        let long = needle_v3_kv_bytes(h, 4096, false);
+        let long_q = needle_v3_kv_bytes(h, 4096, true);
         println!(
-            "max_seq_len {max}, kv_bytes 512 -> {:.1} MB, 4096 -> {:.1} MB",
+            "max_seq_len {max}, kv_bytes 512 -> {:.1} MB, 4096 -> {:.1} MB (int8 {:.1} MB)",
             short as f64 / 1048576.0,
-            long as f64 / 1048576.0
+            long as f64 / 1048576.0,
+            long_q as f64 / 1048576.0
         );
         assert_eq!(max, 8192);
         // The caller often owns the memory budget, so this has to grow with
         // the session rather than report a fixed reservation.
         assert!(short < long, "cache cost should grow with the session");
+        // And the int8 flag has to change the answer, or a caller budgeting
+        // for a quantised session is given the f32 number.
+        assert!(
+            long_q * 3 < long,
+            "int8 estimate {long_q} is not below f32 {long}"
+        );
         needle_v3_free(h);
     }
 }
@@ -186,7 +194,8 @@ fn null_arguments_do_not_crash() {
         assert!(needle_v3_load(ptr::null()).is_null());
         assert!(needle_v3_load_bytes(ptr::null(), 0).is_null());
         assert!(!needle_v3_has_confidence(ptr::null_mut()));
-        assert_eq!(needle_v3_kv_bytes(ptr::null_mut(), 128), 0);
+        assert_eq!(needle_v3_kv_bytes(ptr::null_mut(), 128, false), 0);
+        assert_eq!(needle_v3_kv_bytes(ptr::null_mut(), 128, true), 0);
         assert_eq!(needle_v3_max_seq_len(ptr::null_mut()), 0);
         assert!(needle_v3_run(ptr::null_mut(), ptr::null(), ptr::null()).is_null());
 

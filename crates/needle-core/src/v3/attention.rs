@@ -22,14 +22,34 @@ use alloc::vec;
 
 use crate::math::{exp, sqrt};
 
+/// How a cache hands its keys and values to attention.
+///
+/// The int8 form stores one `i8` per element plus an `f32` scale per head
+/// vector. Because the scale is constant across a head, it hoists out of the
+/// dot product entirely — `Σ (q·scale)·x` is `scale · Σ q·x` — so reading
+/// quantised costs an integer-to-float conversion per element and nothing else.
+#[derive(Debug, Clone, Copy)]
+pub enum KvStore<'a> {
+    F32 {
+        k: &'a [f32],
+        v: &'a [f32],
+    },
+    Int8 {
+        k: &'a [i8],
+        /// One scale per `(slot, kv_head)`.
+        k_scale: &'a [f32],
+        v: &'a [i8],
+        v_scale: &'a [f32],
+    },
+}
+
 /// A ring-buffered key/value cache and the window into it a query may read.
 ///
 /// `k` and `v` are `(slots, num_kv_heads, ·)` and logical position `p` lives
 /// at slot `p % slots`. `lo..=hi` is inclusive.
 #[derive(Debug, Clone, Copy)]
 pub struct Ring<'a> {
-    pub k: &'a [f32],
-    pub v: &'a [f32],
+    pub kv: KvStore<'a>,
     pub slots: usize,
     pub lo: usize,
     pub hi: usize,
@@ -131,17 +151,8 @@ pub fn norm_and_rope(
 /// `window` bounds how far back a query may look, counting itself; `None`
 /// attends over the whole causal prefix. That is the only difference between
 /// v3's local and global layers.
-pub fn attend(
-    q: &[f32],
-    k: &[f32],
-    v: &[f32],
-    d: AttnDims,
-    window: Option<usize>,
-    out: &mut [f32],
-) {
+pub fn attend(q: &[f32], kv: KvStore<'_>, d: AttnDims, window: Option<usize>, out: &mut [f32]) {
     debug_assert_eq!(q.len(), d.seq * d.num_heads * d.qk_head_dim);
-    debug_assert_eq!(k.len(), d.seq * d.num_kv_heads * d.qk_head_dim);
-    debug_assert_eq!(v.len(), d.seq * d.num_kv_heads * d.v_head_dim);
     debug_assert_eq!(out.len(), d.seq * d.num_heads * d.v_head_dim);
 
     let scale = 1.0f32 / sqrt(d.qk_head_dim as f32);
@@ -162,10 +173,22 @@ pub fn attend(
             let mut max = f32::NEG_INFINITY;
             for (n, s) in scores.iter_mut().enumerate().take(t + 1).skip(lo) {
                 let ko = (n * d.num_kv_heads + kvh) * d.qk_head_dim;
-                let mut acc = 0.0f32;
-                for (a, b) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
-                    acc += a * b;
-                }
+                let acc = match kv {
+                    KvStore::F32 { k, .. } => {
+                        let mut a = 0.0f32;
+                        for (x, y) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
+                            a += x * y;
+                        }
+                        a
+                    }
+                    KvStore::Int8 { k, k_scale, .. } => {
+                        let mut a = 0.0f32;
+                        for (x, y) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
+                            a += x * (*y as f32);
+                        }
+                        a * k_scale[n * d.num_kv_heads + kvh]
+                    }
+                };
                 *s = acc * scale;
                 if *s > max {
                     max = *s;
@@ -185,8 +208,18 @@ pub fn attend(
             for (n, &s) in scores.iter().enumerate().take(t + 1).skip(lo) {
                 let w = s * inv;
                 let vo = (n * d.num_kv_heads + kvh) * d.v_head_dim;
-                for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
-                    *oi += w * vi;
+                match kv {
+                    KvStore::F32 { v, .. } => {
+                        for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
+                            *oi += w * vi;
+                        }
+                    }
+                    KvStore::Int8 { v, v_scale, .. } => {
+                        let w = w * v_scale[n * d.num_kv_heads + kvh];
+                        for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
+                            *oi += w * (vi as f32);
+                        }
+                    }
                 }
             }
         }
@@ -204,14 +237,8 @@ pub fn attend(
 /// A local layer passes `slots = sliding_window` and a bounded `lo`; a global
 /// layer passes `slots >= hi + 1` and `lo = 0`. Nothing here needs to know
 /// which kind it is serving.
-pub fn attend_step(q: &[f32], kv: Ring<'_>, d: AttnDims, out: &mut [f32]) {
-    let Ring {
-        k,
-        v,
-        slots,
-        lo,
-        hi,
-    } = kv;
+pub fn attend_step(q: &[f32], ring: Ring<'_>, d: AttnDims, out: &mut [f32]) {
+    let Ring { kv, slots, lo, hi } = ring;
     debug_assert_eq!(q.len(), d.num_heads * d.qk_head_dim);
     debug_assert_eq!(out.len(), d.num_heads * d.v_head_dim);
     debug_assert!(lo <= hi, "empty attention range {lo}..={hi}");
@@ -230,10 +257,24 @@ pub fn attend_step(q: &[f32], kv: Ring<'_>, d: AttnDims, out: &mut [f32]) {
         for (i, s) in scores.iter_mut().enumerate() {
             let slot = (lo + i) % slots;
             let ko = (slot * d.num_kv_heads + kvh) * d.qk_head_dim;
-            let mut acc = 0.0f32;
-            for (a, b) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
-                acc += a * b;
-            }
+            let acc = match kv {
+                KvStore::F32 { k, .. } => {
+                    let mut a = 0.0f32;
+                    for (x, y) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
+                        a += x * y;
+                    }
+                    a
+                }
+                KvStore::Int8 { k, k_scale, .. } => {
+                    // The scale is constant across a head vector, so it comes
+                    // out of the inner loop: sum(q * i8) * scale.
+                    let mut a = 0.0f32;
+                    for (x, y) in qv.iter().zip(&k[ko..ko + d.qk_head_dim]) {
+                        a += x * (*y as f32);
+                    }
+                    a * k_scale[slot * d.num_kv_heads + kvh]
+                }
+            };
             *s = acc * scale;
             if *s > max {
                 max = *s;
@@ -253,8 +294,18 @@ pub fn attend_step(q: &[f32], kv: Ring<'_>, d: AttnDims, out: &mut [f32]) {
             let w = s * inv;
             let slot = (lo + i) % slots;
             let vo = (slot * d.num_kv_heads + kvh) * d.v_head_dim;
-            for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
-                *oi += w * vi;
+            match kv {
+                KvStore::F32 { v, .. } => {
+                    for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
+                        *oi += w * vi;
+                    }
+                }
+                KvStore::Int8 { v, v_scale, .. } => {
+                    let w = w * v_scale[slot * d.num_kv_heads + kvh];
+                    for (oi, &vi) in o.iter_mut().zip(&v[vo..vo + d.v_head_dim]) {
+                        *oi += w * (vi as f32);
+                    }
+                }
             }
         }
     }
@@ -299,8 +350,7 @@ mod tests {
         attend_step(
             &q,
             Ring {
-                k: &k,
-                v: &v,
+                kv: KvStore::F32 { k: &k, v: &v },
                 slots: 3,
                 lo: 2,
                 hi: 4,
@@ -330,12 +380,12 @@ mod tests {
         let k = [1.0f32, 1.0];
         let v = [5.0f32, 9.0];
         let mut out = [0.0f32; 2];
-        attend(&q, &k, &v, d, Some(1), &mut out);
+        attend(&q, KvStore::F32 { k: &k, v: &v }, d, Some(1), &mut out);
         assert_eq!(out, [5.0, 9.0]);
 
         // Unbounded, both positions are equally weighted at position 1.
         let mut out2 = [0.0f32; 2];
-        attend(&q, &k, &v, d, None, &mut out2);
+        attend(&q, KvStore::F32 { k: &k, v: &v }, d, None, &mut out2);
         assert_eq!(out2[0], 5.0);
         assert!((out2[1] - 7.0).abs() < 1e-6, "got {}", out2[1]);
     }

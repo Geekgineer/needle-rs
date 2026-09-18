@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use needle_core::ops::sigmoid;
-use needle_core::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
+use needle_core::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims, KvStore};
 use needle_core::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
 use needle_core::v3::heads::{ProbeHead, ProbePool};
 use needle_core::v3::kernels::{hada_blocks, hadamard_mlp, HadaMlp, HadaPerms};
@@ -206,7 +206,7 @@ fn attention_matches_the_reference() {
 
     let mut attn = vec![0.0f32; seq * o_dim];
     let span = if window == 0 { None } else { Some(window) };
-    attend(&q, &k, &v, d, span, &mut attn);
+    attend(&q, KvStore::F32 { k: &k, v: &v }, d, span, &mut attn);
 
     // out = (attn ⊙ sigmoid(x · gate_proj)) · out_proj
     let mut got = vec![0.0f32; seq * d_model];

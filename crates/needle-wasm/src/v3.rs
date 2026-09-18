@@ -8,7 +8,7 @@
 //!   present-and-useless.
 //! * `confidence_for` matters more here than it did on v2. See its note.
 
-use needle_infer::v3_engine::{extract_tool_call, V3Engine, V3Options};
+use needle_infer::v3_engine::{extract_tool_call, KvPrecision, V3Engine, V3Options};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -56,7 +56,14 @@ impl NeedleV3Wasm {
     }
 
     /// Generate with explicit settings.
+    ///
+    /// `kv_int8` stores the key/value cache as 8-bit — the width the container
+    /// declares and upstream's engine runs — for roughly a quarter of the
+    /// memory. See [`Self::kv_bytes`].
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = generate))]
+    // The JS signature mirrors `V3Options` field for field; collapsing it into
+    // an options object would mean hand-writing the glue wasm-bindgen gives us.
+    #[allow(clippy::too_many_arguments)]
     pub fn generate(
         &self,
         query: &str,
@@ -65,6 +72,7 @@ impl NeedleV3Wasm {
         temperature: f32,
         seed: u32,
         constrain: bool,
+        kv_int8: bool,
     ) -> String {
         let opts = V3Options {
             max_new_tokens: if max_new_tokens == 0 {
@@ -76,6 +84,14 @@ impl NeedleV3Wasm {
             seed: seed as u64,
             system: None,
             constrain,
+            // A browser tab is exactly the constrained target this is for: a
+            // full-context session costs 42.3 MB of cache at f32 and 11.5 MB
+            // here, measured by `v3_kv_int8`.
+            kv_precision: if kv_int8 {
+                KvPrecision::Int8
+            } else {
+                KvPrecision::F32
+            },
         };
         self.engine.generate(query, tools_json, &opts).text
     }
@@ -108,6 +124,18 @@ impl NeedleV3Wasm {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = kv_bytes))]
     pub fn kv_bytes(&self, seq_len: usize) -> usize {
         self.engine.model.cfg.kv_bytes(seq_len, 4)
+    }
+
+    /// The same estimate for a cache stored at int8.
+    ///
+    /// Not a flat quarter of [`Self::kv_bytes`]: every stored head vector also
+    /// carries an `f32` scale. At full context it is 27% of the f32 figure.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = kv_bytes_int8))]
+    pub fn kv_bytes_int8(&self, seq_len: usize) -> usize {
+        self.engine
+            .model
+            .cfg
+            .kv_bytes_at(seq_len, KvPrecision::Int8)
     }
 
     /// Context limit in tokens.

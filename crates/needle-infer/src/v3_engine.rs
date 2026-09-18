@@ -5,6 +5,7 @@
 //! `<think>` chain-of-thought before the call, which v2 did not, so the
 //! default token budget is larger and the extractor has to look past it.
 
+pub use needle_core::v3::KvPrecision;
 use needle_core::v3::{V3Cache, V3Model};
 
 use crate::cact::CactV3;
@@ -49,6 +50,13 @@ pub struct V3Options {
     /// prose first: a `"name":` inside `<think>` would drive the state machine
     /// into a constrained state where it does not belong.
     pub constrain: bool,
+    /// How the key/value cache stores its entries.
+    ///
+    /// [`KvPrecision::Int8`] is the width the container declares in `kv_bits`
+    /// and what upstream's native engine runs, and holds roughly a quarter the
+    /// memory. It is not bit-identical to the f32 path, so it stays opt-in: a
+    /// long session on a constrained target is the case that wants it.
+    pub kv_precision: KvPrecision,
 }
 
 impl Default for V3Options {
@@ -59,6 +67,7 @@ impl Default for V3Options {
             seed: 0,
             system: None,
             constrain: false,
+            kv_precision: KvPrecision::F32,
         }
     }
 }
@@ -153,7 +162,8 @@ impl V3Engine {
         }
 
         let budget = max.saturating_sub(ids.len()).min(opts.max_new_tokens);
-        let mut cache = V3Cache::new(&self.model.cfg, ids.len() + budget);
+        let mut cache =
+            V3Cache::with_precision(&self.model.cfg, ids.len() + budget, opts.kv_precision);
 
         // Prefill the whole prompt in one batched pass, then continue from the
         // cache it fills. Stepping the prompt through `decode_step` costs a

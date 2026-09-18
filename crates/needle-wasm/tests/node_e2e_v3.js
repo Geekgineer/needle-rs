@@ -18,7 +18,7 @@ if (!fs.existsSync(CACT_V3)) {
   console.log("skipping v3 wasm e2e: no weights/needle3.cact");
   process.exit(0);
 }
-const { NeedleV3Wasm, NeedleV2Wasm } = require(PKG);
+const { NeedleV3Wasm, NeedleV2Wasm, extract_tool_call_v3 } = require(PKG);
 
 const TOOLS = JSON.stringify([
   { name: "get_weather", description: "Get current weather for a city",
@@ -64,13 +64,24 @@ const streamedText = e.run_stream(q, TOOLS, (piece) => { streamed += piece; });
 ok(streamed === streamedText, "streamed deltas reproduce the returned text");
 
 // Constrained decoding through the wasm surface.
-const bound = e.generate(q, TOOLS, 0, 0.0, 0, true);
+const bound = e.generate(q, TOOLS, 0, 0.0, 0, true, false);
 ok(bound.includes("get_weather"), "constrained generate still answers");
 
 // Memory reporting, which a page needs before committing to a session.
 const kv = e.kv_bytes(512);
 console.log(`  kv_bytes(512) = ${(kv / 1024 / 1024).toFixed(1)} MB, max_seq_len ${e.max_seq_len()}`);
 ok(kv > 0 && kv < 20 * 1024 * 1024, "kv_bytes(512) is a sane browser figure");
+
+// The int8 cache is the one a memory-constrained tab actually wants.
+const kv8 = e.kv_bytes_int8(512);
+console.log(`  kv_bytes_int8(512) = ${(kv8 / 1024 / 1024).toFixed(1)} MB`);
+ok(kv8 * 3 < kv, "kv_bytes_int8 reports a materially smaller cache");
+const quant = e.generate(q, TOOLS, 0, 0.0, 0, false, true);
+console.log(`  int8 -> ${JSON.stringify(extract_tool_call_v3(quant) ?? quant)}`);
+ok(
+  extract_tool_call_v3(quant) === extract_tool_call_v3(text),
+  "the int8 cache produces the same tool call",
+);
 
 // Both generations must coexist in one module.
 if (fs.existsSync(CACT_V2)) {
