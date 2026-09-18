@@ -74,6 +74,20 @@ kv = e.kv_bytes(512)
 print(f"  kv_bytes(512) = {kv/1024/1024:.1f} MB")
 check(0 < kv < 20 * 1024**2, "kv_bytes is a sane figure")
 
+kv8 = e.kv_bytes(512, kv_int8=True)
+print(f"  kv_bytes(512, kv_int8=True) = {kv8/1024/1024:.1f} MB")
+check(kv8 * 3 < kv, "the int8 cache figure is materially smaller")
+
+# The quantised cache is the width the container declares; it must reach the
+# same decision, not merely run.
+free = e.generate(Q, TOOLS)
+quant = e.generate(Q, TOOLS, kv_int8=True)
+print(f"  int8 tool_call -> {quant['tool_call']}")
+check(
+    free["tool_call"] == quant["tool_call"],
+    "the int8 cache produces the same tool call",
+)
+
 none = e.run_json("Write me a poem about the sea", TOOLS)
 print("  poem ->", repr(none))
 check(none in ("[]", None), "unrelated query abstains")

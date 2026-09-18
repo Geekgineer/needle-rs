@@ -569,6 +569,72 @@ mod tests {
         }
     }
 
+    /// An int8 ring must wrap and grow exactly as the f32 one does.
+    ///
+    /// The int8 layout has a second array — one scale per `(slot, kv_head)` —
+    /// indexed off `slots`, which both `ensure` and the wrap arithmetic change.
+    /// A scale written for one slot and read back for another would not fail
+    /// loudly; it would rescale a head by a neighbour's factor.
+    #[test]
+    fn an_int8_ring_wraps_and_grows_like_the_f32_one() {
+        let c = cfg();
+        let mut cache = V3Cache::with_precision(&c, 2, KvPrecision::Int8);
+        let heads = c.num_kv_heads;
+
+        // Distinct magnitudes per position, so every slot gets its own scale
+        // and a misindexed one is visible.
+        let write = |cache: &mut V3Cache, pos: usize| {
+            let m = (pos + 1) as f32;
+            let k: Vec<f32> = (0..c.k_dim()).map(|i| m * (i as f32 + 1.0)).collect();
+            let v: Vec<f32> = (0..c.v_dim()).map(|i| -m * (i as f32 + 1.0)).collect();
+            cache.write_kv(0, pos, &k, &v);
+        };
+
+        // Fill past the window so the ring both grows (2 -> 4) and wraps.
+        for pos in 0..10 {
+            write(&mut cache, pos);
+        }
+        assert_eq!(cache.slots(0), 4, "local layer is capped at its window");
+
+        let KvStore::Int8 {
+            k,
+            k_scale,
+            v_scale,
+            ..
+        } = cache.kv(0)
+        else {
+            panic!("an int8 cache must hand out an int8 store");
+        };
+        assert_eq!(k.len(), 4 * c.k_dim());
+        assert_eq!(k_scale.len(), 4 * heads);
+        assert_eq!(v_scale.len(), 4 * heads);
+
+        // Position 9 landed in slot 9 % 4 == 1, and its scale is the largest
+        // magnitude written there. Reading it back through the stored integers
+        // must reproduce the quantised input rather than a neighbour's.
+        let slot = 9 % 4;
+        let want = {
+            let m = 10.0f32;
+            let mut x: Vec<f32> = (0..c.k_dim()).map(|i| m * (i as f32 + 1.0)).collect();
+            for ch in x.chunks_mut(c.qk_head_dim) {
+                fake_quant_vec(ch, 8);
+            }
+            x
+        };
+        for h in 0..heads {
+            let sc = k_scale[slot * heads + h];
+            for i in 0..c.qk_head_dim {
+                let idx = slot * c.k_dim() + h * c.qk_head_dim + i;
+                let got = k[idx] as f32 * sc;
+                let expect = want[h * c.qk_head_dim + i];
+                assert!(
+                    (got - expect).abs() <= 1e-4 * expect.abs().max(1.0),
+                    "slot {slot} head {h} element {i}: {got} against {expect}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn layers_grow_to_their_cap_and_no_further() {
         let c = cfg();

@@ -167,6 +167,15 @@ Two things here were easy to get wrong and are worth keeping:
   tolerance. Note that the *continuation* test could not see this: the model
   picked the same 24 tokens either way. Only the logits showed it.
 
+The confidence head runs at f32 even inside an int8 session, deliberately.
+`quant_rows` fires only when a cache is present, and `forward_head` passes
+none — the head pools over its own forward rather than the cached decode loop.
+Upstream's `quant` flag is global and would cover it, so a caller comparing a
+confidence number against the tokens it scores is comparing two numerical
+paths. Left as is because the head is not part of the decode loop the cache
+serves, and because the f32 head is the one verified to 2e-6 against the
+reference.
+
 ## Parity-test audit (v3 against v2)
 
 Done by diffing the two suites' test-function names rather than from memory.
@@ -186,6 +195,26 @@ Gaps found and closed:
   now run in the `parity-v3` job, the first from tracked vectors needing no
   container. `v3_kv_int8` also runs threaded, since its exact-equality
   assertion is what a row-splitting bug breaks.
+- **The Python bindings were never tested in CI at all.** `test_v3.py` existed
+  and no workflow ran it, so the wheel went to PyPI on the strength of the Rust
+  tests alone. The `parity-v3` job now builds the wheel with maturin from the
+  repo root — which is where `pyproject.toml` lives and where the distribution
+  is named `needle-rs`; building the crate manifest directly produces a
+  differently named wheel that is not what ships — installs it, and runs the
+  script. It needs `needle2.cact` as well, because the test asserts all three
+  generations coexist in one module.
+- **Int8 ring growth and wrap.** The int8 continuation test was originally
+  hinted generously enough that `ensure` never grew the ring, leaving the
+  resize of the four int8 buffers — including the per-head scale arrays, whose
+  indexing depends on `slots` — with no coverage. The hint now matches the f32
+  sibling's, the test asserts the ring actually grew, and
+  `an_int8_ring_wraps_and_grows_like_the_f32_one` covers wrap-around readback
+  at the cache level.
+- **Int8 behavioural comparison covered only happy paths.** Three prompts that
+  should all produce a call cannot see the failure that matters — drift that
+  starts *inventing* a call on an unrelated query. Now eight prompts across
+  two tools, including two abstentions and a two-call case, asserting both the
+  payload and whether a tool was called at all.
 
 Deliberately absent, with reasons:
 

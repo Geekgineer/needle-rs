@@ -402,9 +402,18 @@ impl PyV3Engine {
     /// Key/value cache bytes for a session of `seq_len` positions.
     ///
     /// Sized to the session rather than to the context limit, so this is what
-    /// a run actually costs — useful when deciding whether one fits.
-    fn kv_bytes(&self, seq_len: usize) -> usize {
-        self.inner.model.cfg.kv_bytes(seq_len, 4)
+    /// a run actually costs — useful when deciding whether one fits. Pass
+    /// `kv_int8=True` to get the figure for the cache `generate(kv_int8=True)`
+    /// allocates; it is 27% of the f32 figure rather than 25%, because each
+    /// stored head vector also carries a scale.
+    #[pyo3(signature = (seq_len, kv_int8=false))]
+    fn kv_bytes(&self, seq_len: usize, kv_int8: bool) -> usize {
+        let p = if kv_int8 {
+            KvPrecision::Int8
+        } else {
+            KvPrecision::F32
+        };
+        self.inner.model.cfg.kv_bytes_at(seq_len, p)
     }
 
     /// Context limit in tokens.

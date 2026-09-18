@@ -210,6 +210,21 @@ jobs:
           cargo test -p needle-infer --release --features parallel --test v3_e2e -- --nocapture
           cargo test -p needle-infer --release --features parallel --test v3_kv_int8 -- --nocapture
 
+      # The wheel is published to PyPI, and nothing was running its test script.
+      # Needs the v2 container too, because the test asserts all three
+      # generations coexist in one module.
+      - name: Verify the v3 Python bindings
+        run: |
+          hf download Cactus-Compute/needle2 needle2.cact --local-dir weights/
+          pip install -q maturin
+          # Built from the repo root, which is where pyproject.toml lives and
+          # where it names the distribution `needle-rs` and points maturin at
+          # the crate. Building the crate manifest directly produces a
+          # differently named wheel that is not what ships.
+          maturin build --release --out dist/
+          pip install --no-index --find-links dist/ needle-rs
+          python crates/needle-python/tests/test_v3.py
+
       # The browser demo calls exactly these bindings, so a break shows up here
       # rather than in a deployed page.
       - name: Verify the v3 WASM bindings

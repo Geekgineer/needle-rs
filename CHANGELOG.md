@@ -39,7 +39,9 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 - **Bindings** — `V3Engine` (Rust, Python), `NeedleV3Wasm` (WASM),
   `needle_v3_*` (C ABI, 12 entry points).
 - **`kv_bytes(seq_len)`** on the WASM, C and Python surfaces, because on those
-  the caller usually owns the memory budget.
+  the caller usually owns the memory budget. The C and Python forms take a
+  precision flag and WASM has `kv_bytes_int8`, so the figure matches the cache
+  the caller is actually about to allocate.
 - **int8 key/value cache** — `kv_precision` on `V3Options`, `--kv-int8` on the
   CLI, and a `kv_int8` flag on the WASM, C and Python `generate`. This is the
   width the container declares in `kv_bits`, quantised exactly as upstream's

@@ -14,7 +14,7 @@ use needle_core::v3::{KvPrecision, V3Cache};
 use needle_infer::v3_engine::{extract_tool_call, V3Engine, V3Options};
 
 const CACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../weights/needle3.cact");
-const TOOLS: &str = r#"[{"name":"get_weather","description":"Get current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]"#;
+const TOOLS: &str = r#"[{"name":"get_weather","description":"Get current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}},{"name":"control_lights","description":"Turn lights on or off","parameters":{"type":"object","properties":{"room":{"type":"string"},"on":{"type":"boolean"}},"required":["room","on"]}}]"#;
 
 fn engine() -> Option<V3Engine> {
     if !std::path::Path::new(CACT).exists() {
@@ -95,10 +95,19 @@ fn int8_storage_is_about_a_quarter_of_f32() {
 #[test]
 fn int8_answers_the_same_question() {
     let Some(e) = engine() else { return };
+    // Both directions. Quantisation drift that starts *inventing* a call on an
+    // unrelated query is the failure a catalogue of happy-path prompts cannot
+    // see, and it is the one that would matter in a deployment — so the
+    // abstentions carry as much weight here as the calls do.
     let queries = [
         "What's the weather in Paris?",
         "Tell me the current conditions in Tokyo please",
         "is it raining in berlin right now",
+        "Turn off the bedroom lights",
+        "Turn on the kitchen lights and then tell me the weather in Oslo",
+        "Write me a poem about the sea",
+        "What is the capital of France?",
+        "Thanks, that's all",
     ];
 
     let base = V3Options {
@@ -110,20 +119,35 @@ fn int8_answers_the_same_question() {
         ..base.clone()
     };
 
-    let mut agreed = 0;
+    let (mut agreed, mut called, mut abstained) = (0, 0, 0);
     for q in queries {
         let a = e.generate(q, TOOLS, &base);
         let b = e.generate(q, TOOLS, &quant);
         let (ca, cb) = (extract_tool_call(&a.text), extract_tool_call(&b.text));
         println!("q: {q}\n  f32  -> {ca:?}\n  int8 -> {cb:?}");
-        assert!(ca.is_some(), "f32 baseline produced no tool call for {q:?}");
         // The point of the assertion is the *call*, not the prose: int8 is a
         // different numerical path, so identical reasoning text is not owed.
         assert_eq!(ca, cb, "int8 changed the tool call for {q:?}");
+        // And an abstention must stay an abstention rather than becoming an
+        // invented lookup.
+        let invented = |c: &Option<String>| {
+            c.as_deref()
+                .is_some_and(|c| c.contains("get_weather") || c.contains("control_lights"))
+        };
+        assert_eq!(
+            invented(&ca),
+            invented(&cb),
+            "int8 changed whether a tool was called at all for {q:?}"
+        );
+        if invented(&ca) {
+            called += 1;
+        } else {
+            abstained += 1;
+        }
         agreed += 1;
     }
     println!(
-        "{agreed}/{} queries produced an identical tool call",
+        "{agreed}/{} queries agreed exactly ({called} called a tool, {abstained} abstained)",
         queries.len()
     );
 }
@@ -191,7 +215,13 @@ fn int8_prefill_agrees_with_int8_stepping() {
         out
     };
 
-    let mut stepped = V3Cache::with_precision(&model.cfg, tokens.len() + 32, KvPrecision::Int8);
+    // Deliberately hinted short, as the f32 sibling
+    // `batched_prefill_leaves_the_cache_where_stepping_would` is: the
+    // continuation then runs past the hint and `ensure` has to grow the ring.
+    // At int8 that grows four buffers, including the per-head scales, whose
+    // index mapping depends on `slots` — the one path a generous hint hides.
+    let hint = tokens.len() + 8;
+    let mut stepped = V3Cache::with_precision(&model.cfg, hint, KvPrecision::Int8);
     let mut logits = Vec::new();
     for &t in &tokens {
         logits = model.decode_step(&mut stepped, t);
@@ -199,7 +229,7 @@ fn int8_prefill_agrees_with_int8_stepping() {
     let stepped_logits = logits.clone();
     let want = cont(&mut stepped, logits);
 
-    let mut filled = V3Cache::with_precision(&model.cfg, tokens.len() + 32, KvPrecision::Int8);
+    let mut filled = V3Cache::with_precision(&model.cfg, hint, KvPrecision::Int8);
     let pre = model.prefill(&tokens, &mut filled);
 
     // Compare the logits, not just the argmax. The continuation alone is too
@@ -219,12 +249,12 @@ fn int8_prefill_agrees_with_int8_stepping() {
     // exactly even at full precision. What matters is that quantising does not
     // make the gap materially worse — which it does, several-fold, if the
     // batched path attends at a precision the decode path does not.
-    let mut f32_stepped = V3Cache::new(&model.cfg, tokens.len() + 32);
+    let mut f32_stepped = V3Cache::new(&model.cfg, hint);
     let mut fl = Vec::new();
     for &t in &tokens {
         fl = model.decode_step(&mut f32_stepped, t);
     }
-    let mut f32_filled = V3Cache::new(&model.cfg, tokens.len() + 32);
+    let mut f32_filled = V3Cache::new(&model.cfg, hint);
     let f32_pre = model.prefill(&tokens, &mut f32_filled);
     let base = f32_pre
         .iter()
@@ -257,5 +287,16 @@ fn int8_prefill_agrees_with_int8_stepping() {
         want, got,
         "int8 prefill and int8 stepping produced different continuations"
     );
-    println!("int8 continuation identical over {CONTINUE} tokens");
+    // Confirm the growth path was actually taken, rather than trusting the
+    // arithmetic above to stay true if CONTINUE or the prompt changes.
+    assert!(
+        filled.slots(0) > hint,
+        "the ring never grew (slots {} against hint {hint}), so the int8 resize \
+         path is still untested",
+        filled.slots(0)
+    );
+    println!(
+        "int8 continuation identical over {CONTINUE} tokens; ring grew {hint} -> {}",
+        filled.slots(0)
+    );
 }
