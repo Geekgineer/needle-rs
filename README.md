@@ -333,6 +333,7 @@ The failure mode for a from-scratch reimplementation is silent drift: output tha
 | Engram hash indices | exact as integers |
 | Components: MLP **5.4e-6**, attention **2.7e-6**, confidence **2e-6** | — |
 | int8 KV cache vs upstream `fake_quant` | exact, and prefill stays bit-identical to decode |
+| Ladder rungs, 2–20 blocks, against upstream's own slice | worst **1.258e-5** relative, **zero** argmax mismatches |
 
 **Needle v2** — verified against upstream's own `decode.forward_cached` running the same weights, reconstructed from the shipped container by [`tools/cact_params.py`](tools/cact_params.py):
 

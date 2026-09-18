@@ -69,10 +69,17 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
   truncation, so rungs nest and block 0 and the last block are always present.
   The slice is exact: Cactus-Quants packs each row independently, so the mHC
   lane matrices are cut with `CqWeight::select_rows` and keep the codes they
-  were trained with. Verified against containers built by upstream's own
-  exporter — identical geometry at every depth compared, and the same tool call
-  from 8 blocks up. **Quality falls steeply at the bottom**: on the shipped
-  weights 2 and 4 blocks do not produce usable tool calls.
+  were trained with.
+
+  Held to the same standard as the full model: every rung from 2 to 20 blocks is
+  compared against upstream's own `ladder_slice` over the same container, worst
+  **1.258e-5** relative deviation with **zero** argmax mismatches across 399
+  positions. The 20-block row reproduces the headline 9.0e-6. Geometry is
+  separately checked against containers built by upstream's exporter.
+
+  On the shipped weights, 2 and 4 blocks do not produce usable tool calls; 6
+  upward do. That is the model at these widths, not the slice — the numeric
+  parity at those depths is unchanged.
 
 ### Changed
 

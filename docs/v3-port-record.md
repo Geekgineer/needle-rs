@@ -214,14 +214,43 @@ The mHC row arithmetic is the part to get right: `phi_pre` and `phi_post` hold
 `lanes²` rows starting at `layer * lanes²`, which is how the forward pass
 indexes them (`matvec_rows_prepared(.., li * n, ..)` and `.., li * n * n, ..`).
 
-**A load-time slice and a built rung agree.** `v3_ladder_slice` compares the two
-at depths 6 and 8 against containers built by upstream's own exporter: identical
-block subsets, identical global-attention layers, identical Engram sites,
-identical cache size. The comparison stops at geometry and behaviour rather than
-bytes, because the published container is 2-bit for most tensors while the
-public exporter can only emit 4 — so a built rung is a different quantisation of
-the same weights, and at 6 blocks the two differ in output (the slice repeats
-the call once). From 8 blocks up both produce the same tool call.
+**Every rung is held to the 20-block standard.** `v3_ladder_parity` compares
+our load-time slice against upstream's own `rung()` — `ladder_slice` +
+`ladder_config` — run over the *same* container, so both sides start from
+identical weights and identical quantisation and only the slicer differs:
+
+| blocks | max abs | vs RMS | relative | argmax mismatches |
+|---|---|---|---|---|
+| 2 | 2.441e-4 | 22.445 | **1.088e-5** | 0 |
+| 4 | 3.128e-4 | 25.143 | **1.244e-5** | 0 |
+| 6 | 3.357e-4 | 26.684 | **1.258e-5** | 0 |
+| 8 | 3.052e-4 | 29.038 | **1.051e-5** | 0 |
+| 12 | 3.204e-4 | 29.212 | **1.097e-5** | 0 |
+| 16 | 2.594e-4 | 28.320 | **9.160e-6** | 0 |
+| 20 | 2.594e-4 | 28.945 | **8.962e-6** | 0 |
+
+Zero argmax mismatches across 399 positions. The 20-block row reproduces the
+headline 9.0e-6 figure, which is the cross-check that the ladder harness is
+measuring the same thing the original suite does. Asking for the container's own
+depth through the slicing path is bit-identical to the ordinary load.
+
+Comparing against upstream's slice rather than against a built container is
+deliberate. A container from `needle build --layers N` is a different
+quantisation of the same weights — the published archive is 2-bit for most
+tensors and the public exporter emits 4 — so it would confound a slicing error
+with a requantisation difference. `v3_ladder_slice` still compares against built
+rungs at depths 6 and 8 for geometry, where they agree exactly on block subsets,
+global-attention layers, Engram sites and cache size.
+
+**That settles the 6-block divergence.** Our slice and a container built at 6
+blocks produce different output — the slice repeats the tool call once. Since
+the slice matches upstream's own 6-block slice to 1.258e-5 with no argmax
+mismatches, the slicer is not at fault; the difference is the requantisation.
+This was a hypothesis until the per-rung fixtures existed, and is now measured.
+
+Note also that 2 blocks matches to 1.088e-5 with zero argmax mismatches while
+producing unusable text. Numeric correctness at a depth and usable output at
+that depth are separate facts.
 
 **mHC lanes move when you slice.** The lane is `eye(n)[arange(L) % n]` — a
 function of position in the stack, not of block identity — so block 4 sits in
@@ -249,8 +278,15 @@ export path, and the header carries no width field.
   six tensors the canon walk already expects, and only `RouterHead` adds a
   seventh. The embedding would then be this head's forward followed by an L2
   normalisation, its width read from the projection rather than the header.
-  Cactus lists text embedding as a Needle 3 capability; that capability is not
-  reachable from these weights.
+  Cactus lists text embedding as a Needle 3 capability, and their shipped
+  engine header exposes it — `needle_embed(input, out, out_capacity)`, where a
+  null output returns the embedding dimension without computing. Henry Ndubuaku
+  confirmed on 2026-09-18 that retrieval is done through that endpoint and that
+  it will be documented. Since the published container carries no embedding
+  head, their engine must derive the vector from the forward pass rather than
+  from a probe head; exactly how is not something to guess at, and the intent
+  is to implement against their documentation when it lands rather than
+  reverse-engineer the binary.
 
 ## The int8 KV cache
 
