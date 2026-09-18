@@ -51,8 +51,8 @@
     <header class="mb-8">
       <div class="flex items-center gap-2.5 mb-4">
         <span class="mono text-xl font-semibold tracking-tight text-white">needle-rs</span>
-        <span class="mono text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400">v0.2</span>
-        <span id="model-badge" class="mono text-[10px] px-1.5 py-0.5 rounded border border-[#CE422B]/40 bg-[#CE422B]/10 text-[#E8633F]">Needle&nbsp;v1&nbsp;+&nbsp;v2</span>
+        <span class="mono text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400">v0.3</span>
+        <span id="model-badge" class="mono text-[10px] px-1.5 py-0.5 rounded border border-[#CE422B]/40 bg-[#CE422B]/10 text-[#E8633F]">Needle&nbsp;3&nbsp;+&nbsp;v2&nbsp;+&nbsp;v1</span>
       </div>
 
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-tight">
@@ -60,9 +60,9 @@
       </h2>
       <p class="text-gray-400 mt-3 leading-relaxed text-[15px]">
         A small transformer maps <span class="mono text-gray-300">(query, tool list)</span> to a JSON call,
-        entirely client-side — no server, no API key, no data leaving your device. Both
-        <a href="https://huggingface.co/Cactus-Compute/needle2" class="text-gray-300 underline decoration-gray-600 hover:decoration-gray-300" target="_blank" rel="noopener">Needle&nbsp;v2</a>
-        and Needle&nbsp;v1 are here, from the same
+        entirely client-side — no server, no API key, no data leaving your device.
+        <a href="https://huggingface.co/Cactus-Compute/needle3" class="text-gray-300 underline decoration-gray-600 hover:decoration-gray-300" target="_blank" rel="noopener">Needle&nbsp;3</a>,
+        Needle&nbsp;v2 and Needle&nbsp;v1 are all here, from the same
         <a href="https://github.com/geekgineer/needle-rs" class="text-gray-300 underline decoration-gray-600 hover:decoration-gray-300" target="_blank" rel="noopener">needle-rs</a>
         WebAssembly module — pick one and compare.
       </p>
@@ -451,7 +451,7 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
     // Needle 2 is the default even though Needle 3 is listed first: a first
     // visit otherwise pays a 35 MB download before seeing anything work.
     // Needle 3 is one click away and labelled "newest".
-    let selected = "v2";
+    let selected = "v3";
     let engine = null;
     let active = null;  // the MODELS entry currently loaded
     let lastRun = null; // {query, tools, text} — the confidence head needs a completion
