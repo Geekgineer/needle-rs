@@ -298,8 +298,10 @@ impl V3Engine {
         // wraps, so a longer input would be scored on history it cannot see.
         ids.truncate(self.model.cfg.max_seq_len);
 
-        let cells = self.model.forward_cells(&ids);
-        let logit = head.forward(&cells, ids.len(), self.model.cfg.d_model)[0];
+        // Streamed, not materialised: holding every cell would cost
+        // seq * (layers + 1) * d_model floats — 126 MB at 2048 positions, 504
+        // MB at full context — which a browser tab does not survive.
+        let logit = self.model.forward_head(&ids, head)[0];
         Some(1.0 / (1.0 + (-logit).exp()))
     }
 
@@ -473,5 +475,25 @@ mod tests {
     fn greedy_picks_the_maximum() {
         assert_eq!(argmax(&[0.1, 2.0, 0.3]), 1);
         assert_eq!(argmax(&[-5.0, -1.0, -9.0]), 1);
+    }
+}
+
+#[cfg(test)]
+mod thread_safety {
+    use super::*;
+
+    /// The C ABI hands out a `*mut NeedleV3Handle` and its methods take `&self`,
+    /// so a caller may reasonably drive one engine from several threads. That is
+    /// only sound if the engine is `Sync`; if a future field breaks it, this
+    /// fails to compile rather than producing a data race in someone's server.
+    #[allow(dead_code)]
+    fn engine_is_shareable_across_threads() {
+        fn require<T: Send + Sync>() {}
+        require::<V3Engine>();
+        require::<needle_core::v3::V3Model>();
+        // The cache is per-session mutable state and is deliberately NOT
+        // shared; it only needs to move between threads.
+        fn require_send<T: Send>() {}
+        require_send::<needle_core::v3::V3Cache>();
     }
 }

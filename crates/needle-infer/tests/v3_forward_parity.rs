@@ -258,6 +258,11 @@ fn cells_and_confidence_match_the_reference() {
 
 #[test]
 fn batched_prefill_leaves_the_cache_where_stepping_would() {
+    // Long enough to cycle every seeded tail completely. The Engram value
+    // convolution reaches (conv_taps - 1) * dilation = 9 positions back and the
+    // Q/K/V conv 2, so a short continuation can leave a mis-seeded tail
+    // undetected — it would produce a few plausible tokens and then drift.
+    const CONTINUE: usize = 24;
     let Some(f) = Fixture::load() else { return };
     let tokens: Vec<u32> = f.meta["tokens"]
         .as_array()
@@ -280,7 +285,7 @@ fn batched_prefill_leaves_the_cache_where_stepping_would() {
     let step_time = t0.elapsed();
     let mut want_next = Vec::new();
     let mut l = logits.clone();
-    for _ in 0..6 {
+    for _ in 0..CONTINUE {
         let n = argmax(&l);
         want_next.push(n);
         l = model.decode_step(&mut stepped, n);
@@ -295,7 +300,7 @@ fn batched_prefill_leaves_the_cache_where_stepping_would() {
 
     let mut got_next = Vec::new();
     let mut l = pre.clone();
-    for _ in 0..6 {
+    for _ in 0..CONTINUE {
         let n = argmax(&l);
         got_next.push(n);
         l = model.decode_step(&mut filled, n);

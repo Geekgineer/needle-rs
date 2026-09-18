@@ -10,6 +10,7 @@ use std::path::Path;
 use needle_core::ops::sigmoid;
 use needle_core::v3::attention::{attend, causal_depthwise_conv, norm_and_rope, AttnDims};
 use needle_core::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
+use needle_core::v3::heads::{ProbeHead, ProbePool};
 use needle_core::v3::kernels::{hada_blocks, hadamard_mlp, HadaMlp, HadaPerms};
 
 /// `y = x · W` for a row-major `(in, out)` kernel, the orientation the
@@ -377,4 +378,53 @@ fn engram_keys_and_values_match_the_reference() {
         println!("{label}: max abs {worst:.3e} vs RMS {rms:.3} = {rel:.3e} relative");
         assert!(rel < 1e-4, "{label} deviates by {rel:.3e} of RMS");
     }
+}
+
+#[test]
+fn the_streaming_pool_matches_the_two_pass_one() {
+    // The streaming form exists because materialising every cell costs
+    // seq * cells * d_model floats — 504 MB at full context. It must agree
+    // with the two-pass form, which is the one verified against the reference.
+    let (l1, k, q, d, seq) = (5usize, 3usize, 2usize, 16usize, 40usize);
+    let f = |i: usize, m: f32| ((i as f32) * m).sin();
+
+    let head = ProbeHead {
+        probes: (0..l1 * k * d).map(|i| f(i, 0.31)).collect(),
+        gain: (0..l1 * k).map(|i| 1.0 + f(i, 0.17)).collect(),
+        query: (0..q * d).map(|i| f(i, 0.23)).collect(),
+        row_bias: (0..q * l1 * k).map(|i| f(i, 0.11) * 0.5).collect(),
+        proj: (0..q * d).map(|i| f(i, 0.07)).collect(),
+        bias: vec![0.25],
+        cells: l1,
+        probes_per_cell: k,
+        queries: q,
+        out_dim: 1,
+    };
+
+    // Deliberately wide dynamic range, so a naive running softmax would
+    // overflow or lose the early positions entirely.
+    let cells: Vec<f32> = (0..seq * l1 * d)
+        .map(|i| f(i, 0.013) * (1.0 + (i % 7) as f32) * 30.0)
+        .collect();
+
+    let want = head.forward(&cells, seq, d);
+
+    let mut pool = ProbePool::new(&head, d);
+    for t in 0..seq {
+        for l in 0..l1 {
+            pool.observe(l, &cells[(t * l1 + l) * d..(t * l1 + l + 1) * d]);
+        }
+    }
+    let got = pool.finish();
+
+    assert_eq!(got.len(), want.len());
+    let diff = (got[0] - want[0]).abs();
+    println!(
+        "probe pool: streaming {:.6} vs two-pass {:.6}, diff {diff:.3e}",
+        got[0], want[0]
+    );
+    assert!(
+        diff < 1e-4,
+        "streaming pool diverged from the two-pass form: {got:?} vs {want:?}"
+    );
 }

@@ -98,6 +98,14 @@ impl ProbeHead {
             }
         }
 
+        self.pool_and_project(&r, l1, k, q, d)
+    }
+
+    /// The second softmax — over `(layer, probe)` pairs, per query — and the
+    /// final projection. Shared by the two-pass and streaming paths so they
+    /// cannot drift apart.
+    fn pool_and_project(&self, r: &[f32], l1: usize, k: usize, q: usize, d: usize) -> Vec<f32> {
+        let scale = 1.0 / sqrt(d as f32);
         // For each query, a softmax over all (layer, probe) pairs.
         let m = l1 * k;
         let mut pooled = vec![0.0f32; q * d];
@@ -145,6 +153,97 @@ impl ProbeHead {
             *dst = acc + self.bias.get(o).copied().unwrap_or(0.0);
         }
         out
+    }
+}
+
+/// Pools a probe head's first softmax **as positions arrive**, so the cells
+/// are never all held at once.
+///
+/// Materialising them costs `seq * cells * d_model` floats — 504 MB at full
+/// context on the shipped model, which is not survivable in a browser tab.
+/// This holds `cells * probes * d_model` regardless of sequence length: 252 KB.
+///
+/// The trick is the online softmax. `r = Σ_t softmax(s)_t · cell_t` is computed
+/// by carrying a running maximum, denominator and numerator, and rescaling both
+/// whenever a larger score appears — algebraically identical to the two-pass
+/// form, which [`ProbeHead::forward`] still does and the tests compare against.
+pub struct ProbePool<'a> {
+    head: &'a ProbeHead,
+    d: usize,
+    /// Running max per (cell, probe).
+    max: Vec<f32>,
+    /// Running denominator per (cell, probe).
+    den: Vec<f32>,
+    /// Running numerator, `(cells * probes, d_model)`.
+    num: Vec<f32>,
+}
+
+impl<'a> ProbePool<'a> {
+    pub fn new(head: &'a ProbeHead, d_model: usize) -> Self {
+        let m = head.cells * head.probes_per_cell;
+        Self {
+            head,
+            d: d_model,
+            max: vec![f32::NEG_INFINITY; m],
+            den: vec![0.0; m],
+            num: vec![0.0; m * d_model],
+        }
+    }
+
+    /// Feed one position's cell for one cell index (0 is the input embedding).
+    ///
+    /// Order does not matter — the pooling is a sum over positions — so a
+    /// caller may stream all positions for one cell before moving to the next,
+    /// which is how the forward pass is laid out.
+    pub fn observe(&mut self, cell_index: usize, cell: &[f32]) {
+        debug_assert_eq!(cell.len(), self.d);
+        let (k, d) = (self.head.probes_per_cell, self.d);
+        let scale = 1.0 / sqrt(d as f32);
+        for kk in 0..k {
+            let idx = cell_index * k + kk;
+            let pr = &self.head.probes[idx * d..(idx + 1) * d];
+            let mut dot = 0.0f32;
+            for (a, b) in cell.iter().zip(pr) {
+                dot += a * b;
+            }
+            let s = dot * scale;
+
+            let m0 = self.max[idx];
+            let m1 = if s > m0 { s } else { m0 };
+            // Rescale what is already accumulated onto the new maximum.
+            let shift = if m0.is_finite() { exp(m0 - m1) } else { 0.0 };
+            let w = exp(s - m1);
+            self.den[idx] = self.den[idx] * shift + w;
+            let dst = &mut self.num[idx * d..(idx + 1) * d];
+            for (o, &c) in dst.iter_mut().zip(cell) {
+                *o = *o * shift + w * c;
+            }
+            self.max[idx] = m1;
+        }
+    }
+
+    /// Finish the pooling and run the head's second softmax and projection.
+    pub fn finish(self) -> Vec<f32> {
+        let (l1, k, q, d) = (
+            self.head.cells,
+            self.head.probes_per_cell,
+            self.head.queries,
+            self.d,
+        );
+        let mut r = self.num;
+        for idx in 0..l1 * k {
+            let inv = 1.0 / self.den[idx];
+            let dst = &mut r[idx * d..(idx + 1) * d];
+            for o in dst.iter_mut() {
+                *o *= inv;
+            }
+            rms_unit(dst);
+            let g = self.head.gain[idx];
+            for o in dst.iter_mut() {
+                *o *= g;
+            }
+        }
+        self.head.pool_and_project(&r, l1, k, q, d)
     }
 }
 

@@ -24,6 +24,7 @@ use crate::v3::cache::{Qkv, V3Cache};
 pub const DEFAULT_CHUNK: usize = 64;
 use crate::v3::config::V3Config;
 use crate::v3::engram::{engram_indices, ngram_valid, value_conv, EngramDims};
+use crate::v3::heads::{ProbeHead, ProbePool};
 use crate::v3::kernels::{hadamard_mlp, HadaMlp, HadaPerms};
 use crate::v3::mhc::{mix_down, scatter_up, Gates, LaneSite, MhcLayer};
 
@@ -178,7 +179,8 @@ impl V3Model {
         // ── Lane stream for this position ────────────────────────────────
         let mut lanes = vec![0.0f32; n * d];
         let mut emb = vec![0.0f32; d];
-        self.embedding.dequantize_row(token as usize, &mut emb);
+        self.embedding
+            .dequantize_row(self.clamp_token(token), &mut emb);
         for x in emb.iter_mut() {
             *x *= self.embed_scale;
         }
@@ -462,6 +464,18 @@ impl V3Model {
         self.forward_impl(tokens, None)
     }
 
+    /// Run `head` over the sequence without ever holding all the cells.
+    ///
+    /// Prefer this to `forward_cells` + [`ProbeHead::forward`]: the cells cost
+    /// `seq * (layers + 1) * d_model` floats — 504 MB at full context on the
+    /// shipped model — where the streaming pool holds 252 KB regardless of
+    /// length.
+    pub fn forward_head(&self, tokens: &[u32], head: &ProbeHead) -> Vec<f32> {
+        let mut pool = ProbePool::new(head, self.cfg.d_model);
+        self.forward_impl_pooled(tokens, None, None, Some(&mut pool));
+        pool.finish()
+    }
+
     /// Per-layer pooled states, `(seq, num_layers + 1, d_model)`.
     ///
     /// Cell 0 is the scaled input embedding; cell `1 + i` is the lane stream
@@ -481,10 +495,28 @@ impl V3Model {
     /// full pass per position, where this pays the weight traffic once per
     /// chunk.
     pub fn prefill(&self, tokens: &[u32], cache: &mut V3Cache) -> Vec<f32> {
+        // An empty prompt has no last position to report. Returning empty
+        // rather than underflowing keeps this callable from a binding, where a
+        // panic is not recoverable.
+        if tokens.is_empty() {
+            return Vec::new();
+        }
         let rows = self.cfg.logit_rows();
         let all = self.forward_impl_cached(tokens, None, Some(cache));
         let last = tokens.len() - 1;
         all[last * rows..(last + 1) * rows].to_vec()
+    }
+
+    /// Clamp a token id into the embedding table.
+    ///
+    /// Out-of-range ids are a caller error, but this is reachable from every
+    /// binding and a panic in WebAssembly takes the whole module down, so it
+    /// saturates instead. The engine cannot produce one — sampling is bounded
+    /// by `logit_rows()` — so this only guards direct callers driving their own
+    /// decode loop.
+    #[inline]
+    fn clamp_token(&self, tok: u32) -> usize {
+        (tok as usize).min(self.cfg.vocab_size - 1)
     }
 
     fn forward_impl(&self, tokens: &[u32], cells: Option<&mut Vec<f32>>) -> Vec<f32> {
@@ -494,8 +526,18 @@ impl V3Model {
     fn forward_impl_cached(
         &self,
         tokens: &[u32],
+        cells: Option<&mut Vec<f32>>,
+        cache: Option<&mut V3Cache>,
+    ) -> Vec<f32> {
+        self.forward_impl_pooled(tokens, cells, cache, None)
+    }
+
+    fn forward_impl_pooled(
+        &self,
+        tokens: &[u32],
         mut cells: Option<&mut Vec<f32>>,
         mut cache: Option<&mut V3Cache>,
+        mut pool: Option<&mut ProbePool<'_>>,
     ) -> Vec<f32> {
         let cfg = &self.cfg;
         let (seq, d, n) = (tokens.len(), cfg.d_model, cfg.mhc_lanes);
@@ -512,13 +554,17 @@ impl V3Model {
         let mut lanes = vec![0.0f32; seq * n * d];
         let mut emb = vec![0.0f32; d];
         for (t, &tok) in tokens.iter().enumerate() {
-            self.embedding.dequantize_row(tok as usize, &mut emb);
+            self.embedding
+                .dequantize_row(self.clamp_token(tok), &mut emb);
             for e in emb.iter_mut() {
                 *e *= self.embed_scale;
             }
             if let Some(c) = cells.as_deref_mut() {
                 // Cell 0 is the scaled embedding, before the lane broadcast.
                 c[(t * l1) * d..(t * l1 + 1) * d].copy_from_slice(&emb);
+            }
+            if let Some(pl) = pool.as_deref_mut() {
+                pl.observe(0, &emb);
             }
             for lane in 0..n {
                 let off = (t * n + lane) * d;
@@ -804,15 +850,21 @@ impl V3Model {
                 );
             }
 
-            if let Some(c) = cells.as_deref_mut() {
+            if cells.is_some() || pool.is_some() {
+                let mut cell = vec![0.0f32; d];
                 for t in 0..seq {
-                    let dst = &mut c[(t * l1 + li + 1) * d..(t * l1 + li + 2) * d];
-                    for (cc, o) in dst.iter_mut().enumerate() {
+                    for (cc, o) in cell.iter_mut().enumerate() {
                         let mut a = 0.0f32;
                         for lane in 0..n {
                             a += lanes[(t * n + lane) * d + cc];
                         }
                         *o = a / n as f32;
+                    }
+                    if let Some(c) = cells.as_deref_mut() {
+                        c[(t * l1 + li + 1) * d..(t * l1 + li + 2) * d].copy_from_slice(&cell);
+                    }
+                    if let Some(pl) = pool.as_deref_mut() {
+                        pl.observe(li + 1, &cell);
                     }
                 }
             }
