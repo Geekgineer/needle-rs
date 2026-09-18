@@ -260,7 +260,10 @@ model on the rebuilt tree and prints what it produces.
 
 Every parity test skips with a printed notice when its inputs are absent, so a
 fresh clone runs `cargo test` clean, and CI runs both suites against a freshly
-downloaded container.
+downloaded container. Two checks do run on a fresh clone with nothing
+downloaded: `tests/v3_container_offline.rs`, which assembles a synthetic v3
+container byte for byte and walks the canon on it, and the header tests in
+`cact.rs`.
 
 ## Reference files (upstream, treat as spec)
 
