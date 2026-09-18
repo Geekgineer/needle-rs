@@ -109,10 +109,13 @@ catalogue grows; prefer a newer generation for new work.
   <img src="https://img.shields.io/badge/-Quick_start-CE422B?style=flat-square" height="22" alt="Quick start"/>
 </h2>
 
-**Get a model.** v2 is a single self-describing file; v1 needs a vocabulary alongside its weights.
+**Get a model.** v3 and v2 are each a single self-describing file; v1 needs a vocabulary alongside its weights.
 
 ```bash
-# Needle v2 — weights, geometry and tokenizer in one container
+# Needle v3 — weights, geometry and tokenizer in one container
+hf download Cactus-Compute/needle3 needle3.cact --local-dir weights/
+
+# Needle v2 — smaller and faster, same one-file story
 hf download Cactus-Compute/needle2 needle2.cact --local-dir weights/
 
 # Needle v1
@@ -128,12 +131,19 @@ The crate is `needle-rs-cli`; the binary it installs is `needle-rs`. (Both
 those.)
 
 ```bash
-# v2 — the file extension selects the version, so there is no flag to get wrong
-needle-rs --json --constrain weights/needle2.cact \
+# v3 — the container states its own generation, so there is no flag to get wrong
+needle-rs --json --constrain weights/needle3.cact \
   "What's the weather in Paris?" \
   '[{"name":"get_weather","parameters":{"type":"object",
      "properties":{"city":{"type":"string"}},"required":["city"]}}]'
 # → [{"name":"get_weather","arguments":{"city":"Paris"}}]
+
+# Drop --json to see the <think> block v3 reasons with first.
+# --kv-int8 stores the cache at 8 bits: 2.3 MB instead of 8.8 MB at 512 tokens.
+needle-rs --kv-int8 weights/needle3.cact "$QUERY" "$TOOLS"
+
+# v2 — same binary, same invocation
+needle-rs --json weights/needle2.cact "$QUERY" "$TOOLS"
 
 # v1 — same binary, two files
 needle-rs weights/needle.safetensors weights/vocab.txt "$QUERY" "$TOOLS"
@@ -145,6 +155,14 @@ needle-rs weights/needle.safetensors weights/vocab.txt "$QUERY" "$TOOLS"
 <br/>
 
 ```rust
+use needle_infer::v3_engine::V3Engine;          // Needle v3
+let engine = V3Engine::load("weights/needle3.cact")?;
+let text = engine.run(query, tools_json);       // reasoning + call
+println!("{}", engine.run_json(query, tools_json).unwrap_or_default());
+println!("{:?}", V3Engine::reasoning(&text));   // the <think> block, if any
+// Pass the completion, never the bare query — the head scores a finished answer.
+println!("{:?}", engine.confidence_for(query, tools_json, &text));
+
 use needle_infer::v2_engine::V2Engine;          // Needle v2
 let engine = V2Engine::load("weights/needle2.cact")?;
 let out = engine.run(query, tools_json);
@@ -161,13 +179,19 @@ println!("{}", engine.run(query, tools_json).text);
 <br/>
 
 ```js
-import init, { NeedleV2Wasm, NeedleWasm } from "needle-rs";
+import init, { NeedleV3Wasm, NeedleV2Wasm, NeedleWasm } from "needle-rs";
 await init();
 
+const v3 = NeedleV3Wasm.load(new Uint8Array(cactBytes));
+const out = v3.run(query, toolsJson);
+v3.run_json(query, toolsJson);                 // just the payload
+v3.reasoning(out);                             // the <think> block, or undefined
+v3.confidence_for(query, toolsJson, out);      // pass the completion, not the query
+v3.kv_bytes(512);                              // 8.8 MB — budget a tab before loading
+v3.kv_bytes_int8(512);                         // 2.3 MB at 8 bits
+// No retrieve_tools on v3: it exports a confidence head and nothing else.
+
 const v2 = NeedleV2Wasm.load(new Uint8Array(cactBytes));
-const out = v2.run(query, toolsJson);
-v2.run_json(query, toolsJson);                 // just the payload
-v2.confidence_for(query, toolsJson, out);      // confidence in that answer
 v2.retrieve_tools(query, descriptions, 3);     // rank tools by relevance
 
 const v1 = NeedleWasm.load(weightsBytes, vocabText);
@@ -180,13 +204,18 @@ v1.run(query, toolsJson);
 <br/>
 
 ```python
-from needle_rs import V2Engine, NeedleEngine
+from needle_rs import V3Engine, V2Engine, NeedleEngine
 
-engine = V2Engine.load("weights/needle2.cact")
+engine = V3Engine.load("weights/needle3.cact")
 engine.run_json(query, tools_json)                     # tool-call payload
-engine.generate(query, tools_json, constrain=True)     # dict with stop_reason
-engine.retrieve_tools(query, descriptions, top_k=3)
+engine.generate(query, tools_json, constrain=True)     # dict: text, tool_call,
+                                                       # reasoning, stop_reason
+engine.generate(query, tools_json, kv_int8=True)       # 8-bit key/value cache
+engine.confidence_for(query, tools_json, completion)   # the completion, not the query
+engine.kv_bytes(512, kv_int8=True)                     # what a session will cost
+# V3Engine has no retrieve_tools — v3 exports no contrastive head.
 
+V2Engine.load("weights/needle2.cact").retrieve_tools(query, descriptions, top_k=3)
 NeedleEngine.load("weights/needle.safetensors", "weights/vocab.txt")
 ```
 
