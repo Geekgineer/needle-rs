@@ -199,6 +199,10 @@ jobs:
           # no container: it pins the quantiser against upstream's fake_quant
           # and the hoisted-scale reader against a dequantised buffer.
           cargo test -p needle-core   --release --test v3_kv_quant_parity -- --nocapture
+          # Ladder rungs: synthetic containers at every depth 2..20, needing
+          # neither JAX nor a checkpoint. The rung geometry fixture is upstream's
+          # own ladder_layer_indices output, so this pins our reading of it.
+          cargo test -p needle-infer  --release --test v3_rung_containers -- --nocapture
           # These two need the container only. The int8 suite is what proves
           # the quantised cache saves the memory it claims and that batched
           # prefill and stepped decode stay bit-identical under it.
