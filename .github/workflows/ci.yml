@@ -203,6 +203,10 @@ jobs:
           # neither JAX nor a checkpoint. The rung geometry fixture is upstream's
           # own ladder_layer_indices output, so this pins our reading of it.
           cargo test -p needle-infer  --release --test v3_rung_containers -- --nocapture
+          # Real rung containers, if any are present. They are built from the
+          # 242 MB checkpoint with JAX (tools/build_rung.py), so CI does not
+          # make them and this skips cleanly.
+          cargo test -p needle-infer  --release --test v3_rung_e2e -- --nocapture
           # These two need the container only. The int8 suite is what proves
           # the quantised cache saves the memory it claims and that batched
           # prefill and stepped decode stay bit-identical under it.
