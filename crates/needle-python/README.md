@@ -82,8 +82,9 @@ a progress view and the **returned** string is the answer.
 
 Needle 2 and Needle 1 carry a contrastive head for narrowing a large catalogue
 before routing. Embeddings are L2-normalised, so similarity is a plain dot
-product. **Needle 3 does not** — it exports a confidence head and nothing else,
-so `V3Engine` has no `retrieve_tools`.
+product. **The published Needle 3 weights do not** — they export only a
+confidence head, so `V3Engine` has no `retrieve_tools`. Needle 3's architecture
+defines an embedding head; it is not in this checkpoint.
 
 ```python
 engine.retrieve_tools(

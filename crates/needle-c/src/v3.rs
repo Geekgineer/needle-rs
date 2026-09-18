@@ -19,10 +19,11 @@
 //! `needle_last_error`, both shared with the v1 and v2 surfaces.
 //!
 //! There is deliberately no `needle_v3_retrieve_tools` or
-//! `needle_v3_encode_contrastive`: v3 exports a confidence head and nothing
-//! else, so those would have to return empty on every call. An absent symbol
-//! is a compile error at the call site; a present one that always fails is a
-//! runtime mystery.
+//! `needle_v3_encode_contrastive`: the published Needle 3 weights export only
+//! a confidence head, so those would have to return empty on every call. An
+//! absent symbol is a compile error at the call site; a present one that
+//! always fails is a runtime mystery. The architecture does define an
+//! embedding head — it is not in this checkpoint.
 
 use crate::{clear_last_error, set_last_error};
 use needle_infer::v3_engine::{KvPrecision, V3Engine, V3Options, DEFAULT_MAX_NEW_TOKENS};

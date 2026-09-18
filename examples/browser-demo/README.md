@@ -32,8 +32,9 @@ engines.
   | Confidence scoring | ✓ | ✓ | — |
   | Contrastive tool retrieval | — | ✓ | ✓ |
 
-  v3 exports a confidence head and nothing else, so the retrieval panel is
-  hidden rather than shown empty.
+  The published v3 weights export only a confidence head, so the retrieval
+  panel is hidden rather than shown empty. (The architecture defines an
+  embedding head; it is not in this checkpoint.)
 
 The spec cards read measured values: the runtime size comes from the actual
 `PerformanceResourceTiming` entry for the wasm module and the model size from the

@@ -1,8 +1,21 @@
 //! Needle 3 probe heads.
 //!
-//! v3 exports one: confidence. The contrastive head v2 carried is not in this
-//! container (`extras.heads = ["confidence"]`), so `retrieve_tools` has no v3
-//! equivalent — the same situation as the published v1 weights.
+//! The published `needle3.cact` exports one: confidence. Its `heads.manifest`
+//! lists a single code, `2`.
+//!
+//! That is a property of the released weights, not of the architecture.
+//! Upstream defines three heads — embedding (code 1), confidence (2) and
+//! router (3) — and `export.py` writes whichever are present in the
+//! checkpoint (`present = [h for h in HEADS if h.key in params]`). The
+//! released Needle 3 checkpoint carries no `embedding_head`, so none is in the
+//! container and `retrieve_tools` has no v3 equivalent *from these weights* —
+//! the same situation as the published v1 checkpoint.
+//!
+//! A container that did carry code 1 would load here unchanged: the embedding
+//! head is a `ProbeHead` like the others and exports the same six tensors
+//! (only the router adds a seventh), so the canon walk already handles it.
+//! Producing the embedding would then be this head's `forward` followed by an
+//! L2 normalisation, with the output width read off the projection.
 //!
 //! A probe head reads the per-layer cells rather than the final hidden state,
 //! and pools them twice: once over positions, per (layer, probe), and once

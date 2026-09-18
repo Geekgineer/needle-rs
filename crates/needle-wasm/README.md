@@ -68,9 +68,11 @@ finished judgement: a correct call scores 0.93 and a wrong one 0.26, but a bare
 query scores 0.80 — a plausible number that means nothing. Needle 2 collapsed to
 near zero on that mistake, so it announced itself; Needle 3's does not.
 
-Needle 3 exports no retrieval head, so `contrastive_dim`, `encode_contrastive`
-and `retrieve_tools` are absent on `NeedleV3Wasm` rather than present and always
-empty. Use `NeedleV2Wasm` if you need them.
+The published Needle 3 weights export only a confidence head, so
+`contrastive_dim`, `encode_contrastive` and `retrieve_tools` are absent on
+`NeedleV3Wasm` rather than present and always empty. Use `NeedleV2Wasm` if you
+need them. (Needle 3's architecture does define an embedding head — it is not
+in this checkpoint.)
 
 ## Quick start — Needle v2
 

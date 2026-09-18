@@ -325,7 +325,8 @@
     // load either and the UI adapts to what that version can do.
     //
     //   v3  NeedleV3Wasm  — one .cact file, 121M params. Reasons before
-    //                       answering, confidence head, no retrieval head.
+    //                       answering, confidence head. The published weights
+    //                       carry no retrieval head (the architecture has one).
     //   v2  NeedleV2Wasm  — one .cact file (weights + geometry + tokenizer),
     //                       reasoning traces, confidence, sampling, an
     //                       optional grammar constraint.
@@ -352,9 +353,9 @@
           ". At 35 MB it is the largest of the three — worth it when quality matters, " +
           "but Needle 2 is a quarter the download. Weights are Apache-2.0; the runtime stays MIT.",
         caps: { constrain: true, maxTokens: true, confidence: true, retrieval: false, think: true, stream: true },
-        capsNote: "Needle 3 exports no retrieval head, so tool ranking is unavailable — use Needle 2 for that.",
+        capsNote: "These Needle 3 weights carry no retrieval head, so tool ranking is unavailable — use Needle 2 for that.",
         headsNote:
-          "Needle 3 ships a confidence head but no contrastive head. Confidence scores a finished " +
+          "These Needle 3 weights ship a confidence head but no contrastive head. Confidence scores a finished " +
           "answer, not a question: pass it the completion. A bare query scores around 0.80 here, " +
           "which looks confident and means nothing.",
         code: `import init, { NeedleV3Wasm } from "needle-rs";

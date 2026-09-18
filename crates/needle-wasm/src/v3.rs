@@ -3,9 +3,10 @@
 //! Mirrors [`crate::v2::NeedleV2Wasm`] so a page can switch generations by
 //! swapping the class, with two deliberate differences:
 //!
-//! * There is no retrieval. v3 exports a confidence head and nothing else, so
-//!   `contrastive_dim()` would always be 0 — the method is absent rather than
-//!   present-and-useless.
+//! * There is no retrieval. The published Needle 3 weights export only a
+//!   confidence head, so `contrastive_dim()` would always be 0 — the method is
+//!   absent rather than present-and-useless. The architecture does define an
+//!   embedding head; it is simply not in this checkpoint.
 //! * `confidence_for` matters more here than it did on v2. See its note.
 
 use needle_infer::v3_engine::{extract_tool_call, KvPrecision, V3Engine, V3Options};

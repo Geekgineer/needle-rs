@@ -92,9 +92,11 @@ reasons before answering, which shows up on ambiguous queries and larger tool
 catalogues.
 
 **Pick Needle 2** for the smallest viable browser deployment, or when you need
-tool retrieval — v3 exports no contrastive head, so `retrieve_tools` and
-`encode_contrastive` are absent on the v3 API rather than present and always
-empty.
+tool retrieval — the published Needle 3 weights export only a confidence head,
+so `retrieve_tools` and `encode_contrastive` are absent on the v3 API rather
+than present and always empty. Needle 3's *architecture* defines an embedding
+head; it is not in this checkpoint, and would load unchanged if a future one
+carried it.
 
 **Needle 1** remains supported for compatibility. It abstains readily as a tool
 catalogue grows; prefer a newer generation for new work.
@@ -189,7 +191,7 @@ v3.reasoning(out);                             // the <think> block, or undefine
 v3.confidence_for(query, toolsJson, out);      // pass the completion, not the query
 v3.kv_bytes(512);                              // 8.8 MB — budget a tab before loading
 v3.kv_bytes_int8(512);                         // 2.3 MB at 8 bits
-// No retrieve_tools on v3: it exports a confidence head and nothing else.
+// No retrieve_tools on v3: these weights export only a confidence head.
 
 const v2 = NeedleV2Wasm.load(new Uint8Array(cactBytes));
 v2.retrieve_tools(query, descriptions, 3);     // rank tools by relevance
@@ -213,7 +215,7 @@ engine.generate(query, tools_json, constrain=True)     # dict: text, tool_call,
 engine.generate(query, tools_json, kv_int8=True)       # 8-bit key/value cache
 engine.confidence_for(query, tools_json, completion)   # the completion, not the query
 engine.kv_bytes(512, kv_int8=True)                     # what a session will cost
-# V3Engine has no retrieve_tools — v3 exports no contrastive head.
+# V3Engine has no retrieve_tools — these weights carry only a confidence head.
 
 V2Engine.load("weights/needle2.cact").retrieve_tools(query, descriptions, top_k=3)
 NeedleEngine.load("weights/needle.safetensors", "weights/vocab.txt")

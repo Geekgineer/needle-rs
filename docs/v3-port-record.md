@@ -126,8 +126,19 @@ workspace; `clippy --all-targets -D warnings` clean.
   `ladder_slice` and `width_slice` appear only in `architecture.py`, are never
   called by `export.py`, `run.py` or `checkpoints.py`, and the container header
   carries no depth or width field. The shipped `.cact` bakes one configuration.
-- **No contrastive head in v3**, so `retrieve_tools` and `encode_contrastive`
-  have no v3 equivalent on any surface.
+- **No contrastive head in the published v3 weights**, so `retrieve_tools` and
+  `encode_contrastive` have no v3 equivalent on any surface. This is a property
+  of the checkpoint, not the architecture: upstream defines three heads —
+  embedding (1), confidence (2), router (3) — and `export.py` emits whichever
+  are present in the params, so the released checkpoint simply has no
+  `embedding_head`. The container's `heads.manifest` is the single code `2`.
+  Were a container to carry code 1 it would load unchanged — `EmbeddingHead`
+  subclasses `ProbeHead` and does not override `export`, so it emits the same
+  six tensors the canon walk already expects, and only `RouterHead` adds a
+  seventh. The embedding would then be this head's forward followed by an L2
+  normalisation, its width read from the projection rather than the header.
+  Cactus lists text embedding as a Needle 3 capability; that capability is not
+  reachable from these weights.
 
 ## The int8 KV cache
 
@@ -224,7 +235,7 @@ Deliberately absent, with reasons:
   is no chunk boundary to be invariant to.
 - **No batch-scratch test** (v2's `batch_scratch_is_reusable`): v3 exposes no
   batch API.
-- **No contrastive/retrieval tests**: v3 exports only a confidence head.
+- **No contrastive/retrieval tests**: the published v3 weights export only a confidence head.
 - **`v3_component_parity` and `v3_forward_parity` are not run in CI** because
   their fixture ladders are gitignored for size; both skip cleanly. CI exercises
   the container, tokenizer, e2e, FFI, KV-quantisation and statelessness suites,

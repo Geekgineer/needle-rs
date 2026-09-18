@@ -74,9 +74,11 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 
 - **Needle 3 is Apache-2.0** where v1 and v2 were MIT. needle-rs itself remains
   MIT; the licence applies to the weights.
-- **v3 exports no contrastive head**, so `retrieve_tools` and
-  `encode_contrastive` have no v3 equivalent. The methods are absent rather
-  than present-and-always-empty.
+- **The published v3 weights export no contrastive head**, so `retrieve_tools`
+  and `encode_contrastive` have no v3 equivalent. The methods are absent rather
+  than present-and-always-empty. This is the checkpoint, not the architecture:
+  upstream defines an embedding head and exports whichever heads the params
+  carry, and this one has only confidence.
 - **v3 reasons before answering**, on essentially every query. v2 does so only
   sometimes — 2 of 3 sample prompts on the shipped checkpoint — so a caller that
   treated a `<think>` block as a v3 marker would misclassify v2 output. The
