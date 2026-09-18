@@ -244,7 +244,7 @@ Upstream replaced v1's encoder–decoder with a decoder-only architecture in a n
 <tr><td>Constrained decoding</td><td>optional</td><td>optional</td><td>always on</td></tr>
 <tr><td>Sampling</td><td>✓ temperature + seed</td><td>✓ temperature + seed</td><td>greedy only</td></tr>
 <tr><td>Confidence head</td><td>✓</td><td>✓</td><td>—</td></tr>
-<tr><td>Tool retrieval head</td><td>—</td><td>✓ 128-d</td><td>✓ <sub>not in the published weights</sub></td></tr>
+<tr><td>Tool retrieval head</td><td>—</td><td>✓ 128-d</td><td>— <sub>architecture has one; the published weights do not</sub></td></tr>
 <tr><td>Quantised KV cache</td><td>✓ <code>--kv-int8</code></td><td>—</td><td>—</td></tr>
 <tr><td>Weights licence</td><td>Apache-2.0</td><td>MIT</td><td>MIT</td></tr>
 </tbody>
@@ -341,7 +341,7 @@ The failure mode for a from-scratch reimplementation is silent drift: output tha
 
 Fixtures are committed, so the contract is version-pinned and reproducible without re-running Python. 341 Rust tests and 94 WASM binding assertions run in CI, in both the default and `parallel` feature configurations, alongside the C ABI and Python wheel.
 
-A measured caution: the reference config ships `dtype="bfloat16"`, and a correct implementation scores **9.7** relative error against a bfloat16 oracle. Every figure above is against an f32 reference — see [docs/v3-port-record.md](docs/v3-port-record.md).
+A measured caution, because it cost two debugging sessions: the reference config ships `dtype="bfloat16"`, and measuring against a bfloat16 oracle makes a *correct* implementation look catastrophically wrong — a relative error of **9.7**, i.e. about 970%, not a small number with a missing exponent. Every figure above is measured against an f32 reference. See [docs/v3-port-record.md](docs/v3-port-record.md).
 
 <br/>
 
@@ -360,11 +360,11 @@ Apple M5 Max, steady state, threaded — which is what the CLI, Python and C cra
 | Session memory | **~23 MB** | — |
 | Runtime dependencies | **0** | 4 |
 
-**Needle v3** carries 121M parameters against v2's 45M, so it costs roughly 2–3× per token — 10 ms to load, 4.20 ms/token prefill and 8.65 ms/token decode. A 100-token prompt answers in about 700 ms, 424 ms of it to first token. That is the trade v3 asks for, and the reason v2 is not deprecated.
-
 Decode is **1.35× faster** and cold start about **50×** faster; prefill is slower, because the reference multiplies dense f32 weights while this runs from 2-bit packed ones. On a single query the two cross at **48 generated tokens** — faster above, slower below, and faster at any length on a cold process.
 
 Prefill improved **3.6×** during the v2 port (5.74 → 1.60 ms/token) via batching, threading and batched Engram projections. The packed dot product is **2.9×** faster than a single-accumulator version and **9.1×** faster than a naive one.
+
+**Needle v3**, same machine and flags, carries 121M parameters against v2's 45M and costs roughly 2–3× per token: 10 ms to load, **4.20 ms/token** prefill and **8.65 ms/token** decode. A 100-token prompt answers in about 700 ms, 424 ms of it to first token. Its `--kv-int8` cache costs about 2% of that speed and roughly a quarter of the memory. That is the trade v3 asks for, and the reason v2 is not deprecated.
 
 Full methodology — including the optimisations that were measured and **rejected**, such as hand-written NEON losing to LLVM's autovectoriser — is in [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -378,7 +378,7 @@ Full methodology — including the optimisations that were measured and **reject
 - **In-browser agents.** Route a user's sentence to one of your app's functions with no backend. See [`examples/browser-demo`](examples/browser-demo) and the [live demo](https://needle-rs.pages.dev).
 - **Dynamic tool sets.** Generate tools from live state each turn and let the model pick — [`examples/dom-editor`](examples/dom-editor) rewrites a page from plain English.
 - **Edge workers.** 537 KB of WASM fits inside a Cloudflare Worker.
-- **Large tool catalogues.** Narrow hundreds of tools with the retrieval head before the call.
+- **Large tool catalogues.** Narrow hundreds of tools with the retrieval head before the call — Needle 2 only, which is the one generation that ships a contrastive head.
 - **Uncertainty-aware routing.** Use the confidence head to escalate to a larger model only when needed.
 - **Offline and embedded.** `no_std` kernels, one dependency, no allocator assumptions beyond `alloc`.
 
@@ -391,7 +391,7 @@ Not the right tool for open-ended chat, long-form generation, or reasoning beyon
   <img src="https://img.shields.io/badge/-Acknowledgements-7D8590?style=flat-square" height="22" alt="Acknowledgements"/>
 </h2>
 
-Needle is designed and trained by [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. The model architecture, training code, dataset, and weights are entirely their work, released under MIT. `needle-rs` is an independent Rust runtime — no upstream code is copied, only the published architecture is implemented.
+Needle is designed and trained by [Henry Ndubuaku](https://github.com/hndubuaku) and the [Cactus Compute](https://github.com/cactus-compute) team. The model architecture, training code, dataset, and weights are entirely their work, released openly — the upstream repository under Apache-2.0, the Needle 3 weights under Apache-2.0, and the Needle 2 and Needle 1 weights under MIT. `needle-rs` is an independent Rust runtime — no upstream code is copied, only the published architecture is implemented. See [NOTICE](NOTICE).
 
 **If you find this useful, please star the [upstream Needle repo](https://github.com/cactus-compute/needle) as well.**
 
@@ -402,9 +402,24 @@ Needle is designed and trained by [Henry Ndubuaku](https://github.com/hndubuaku)
   <img src="https://img.shields.io/badge/-Citation-7D8590?style=flat-square" height="22" alt="Citation"/>
 </h2>
 
-The model is Cactus Compute's work. Cite it as they ask — this is their entry,
-reproduced verbatim. The design and ablations are in the paper,
-[arXiv:2607.18363](https://arxiv.org/abs/2607.18363).
+The model is Cactus Compute's work. Cite it as they ask — these are their
+entries, reproduced verbatim from the upstream README. The design and ablations
+are in the paper, [arXiv:2607.18363](https://arxiv.org/abs/2607.18363).
+
+Current, and what to cite unless you mean an older generation specifically:
+
+```bibtex
+@misc{needle3_2026,
+  title        = {Needle: Automation Foundation Model for Tiny Devices},
+  author       = {Ndubuaku, Henry and Mosoyan, Karen and Mroz, Jakub and Cylich, Noah and
+                  Kumar, Satyajit and Sandhu, Parkirat and Shemet, Roman and Lee, Justin H.},
+  year         = {2026},
+  organization = {Cactus Compute, Inc.},
+  howpublished = {\url{https://github.com/cactus-compute/needle}}
+}
+```
+
+If your work uses the v2 weights specifically:
 
 ```bibtex
 @misc{needle2_2026,
