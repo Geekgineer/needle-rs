@@ -57,6 +57,26 @@ published version as permanent, so a leaked token cannot be undone by yanking.
 
 ## Cutting a release
 
+**Before anything: check the committer identity.** A release is an *annotated*
+tag, and `git tag -a` refuses to write one without `user.name` and `user.email`.
+This machine has no global identity, so the tag fails with "Committer identity
+unknown" and the release simply does not start — it cost the 0.2.0 release and
+then the 0.3.0 one. Set it repo-locally once:
+
+```bash
+git config user.name  "Abdalrahman Ibrahim"
+git config user.email "abdalrahman.m5959@gmail.com"
+git config --local --get user.email   # confirm, and that it is the repo, not --global
+```
+
+It is already set in this working tree. A fresh clone will need it again, so
+check before tagging rather than after. The one-off alternative, if you would
+rather not store it, is to pass it inline:
+
+```bash
+git -c user.name="..." -c user.email="..." tag -a vX.Y.Z -m "needle-rs X.Y.Z"
+```
+
 1. **Bump the version in both manifests.** `Cargo.toml`
    (`workspace.package.version`) and `pyproject.toml` (`project.version`). They
    must match the tag: the `version-guard` job fails the whole run before
