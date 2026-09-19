@@ -139,6 +139,13 @@ the call. Prefer it for new work. Needle 2 remains the smallest viable browser
 deployment, and these v1 weights are for when you specifically want the
 smallest model.
 
+Since 0.3.1 the v3 path also takes `--layers N`. Needle 3 is a laddered model —
+every depth from 2 to 20 blocks is a trained subnetwork — so one download serves
+every rung, and a shallower one costs proportionally less key/value cache
+(8 blocks needs 3.5 MB at 512 tokens against 20 blocks' 8.8 MB). Quality falls
+with depth and falls sharply at the bottom: on the shipped weights 2 and 4
+blocks do not produce usable tool calls, 6 upward do.
+
 ## Files
 
 | File | Size | Description |
