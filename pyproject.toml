@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "needle-rs"
-version = "0.3.0"
+version = "0.3.1"
 description = "Pure-Rust + WebAssembly runtime for the Needle AI tool-calling models (v3, v2 and v1)"
 # A PyPI-specific README: the repo README's image links are relative, which
 # renders broken on the package page.

@@ -5,6 +5,78 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-18
+
+Depth selection for Needle 3, and a round of corrections to things 0.3.0 said
+that were not accurate.
+
+### Added
+
+- **Selectable depth** — `V3Engine::load_with_depth`, `--layers N` on the CLI,
+  `NeedleV3Wasm.load_with_depth`, `V3Engine.load_with_depth` in Python and
+  `needle_v3_load_with_depth` in C. Needle 3 is a laddered model: every depth
+  from 2 to 20 blocks is a trained subnetwork. Upstream ships one by rewriting
+  the container; this takes the same slice from the full file, so a single
+  35 MB download serves every rung — a shallow pass for a simple command, the
+  full stack for a hard one. 8 blocks needs 3.5 MB of key/value cache against
+  20 blocks' 8.8 MB at 512 tokens.
+
+  The kept blocks are chosen by bisecting from both endpoints, not by
+  truncation, so rungs nest and block 0 and the last block are always present.
+  The slice is exact: Cactus-Quants packs each row independently, so the mHC
+  lane matrices are cut with `CqWeight::select_rows` and keep the codes they
+  were trained with.
+
+  Held to the same standard as the full model: every rung from 2 to 20 blocks is
+  compared against upstream's own `ladder_slice` over the same container, worst
+  **1.258e-5** relative deviation with **zero** argmax mismatches across 399
+  positions. The 20-block row reproduces the headline 9.0e-6. Geometry is
+  separately checked against containers built by upstream's exporter.
+
+  On the shipped weights, 2 and 4 blocks do not produce usable tool calls; 6
+  upward do. That is the model at these widths, not the slice — the numeric
+  parity at those depths is unchanged.
+
+### Changed
+- **`tools/build_rung.py`** — builds a rung container the way
+  `needle build --layers N` does, by calling upstream's own `rung()` and
+  exporter. Needs JAX and the 242 MB base checkpoint.
+- **`tools/gen_v3_ladder_parity.py`** and the `v3_ladder_parity`,
+  `v3_ladder_slice`, `v3_rung_containers` and `v3_rung_e2e` suites, which is
+  where the per-rung numbers above come from.
+- **Python bindings are tested in CI.** `test_v3.py` existed and nothing ran
+  it; the wheel went to PyPI on the strength of the Rust tests alone.
+
+### Fixed
+
+- **The browser demo reported an error on its own default model.** Loading
+  Needle 3 called `engine.contrastive_dim()`, which `NeedleV3Wasm` does not
+  define, inside the load `try` — so a model that had loaded correctly finished
+  by painting a red dot reading "engine.contrastive_dim is not a function".
+- **The demo badged itself `v0.2` / "Needle v1 + v2"** and pre-selected Needle 2,
+  on a page a Needle 3 release link points at.
+- **"162 KB over the wire" was a local measurement.** `brotli -q 11` produces
+  that; Cloudflare compresses at a lower level, so a visitor actually downloads
+  **195 KB**. Corrected everywhere, along with the module's own size — 537 KB
+  after `wasm-opt -Oz`, not 529 — and the CLI (765 KB) and C dylib (815 KB).
+- **Licensing was wrong in three public places.** The README footer, the npm
+  README and the PyPI README all said the models are "also MIT". Upstream is
+  Apache-2.0, as are Needle 3's weights; Needle 2's and Needle 1's are MIT.
+  Adds a `NOTICE` file recording what needle-rs is in relation to upstream.
+- **"v3 exports a confidence head and nothing else"** read as an architectural
+  limit. It is a property of the released checkpoint: upstream defines an
+  embedding head and exports whichever heads the params carry. Cactus's engine
+  exposes embeddings through `needle_embed`.
+- **"v2 answers directly"** was untrue in five places — Needle 2 emits a
+  `<think>` block on 2 of 3 sample prompts, so the block is not a generation
+  marker.
+- **The two comparison tables disagreed** on whether Needle 1 has tool
+  retrieval, and the citation section had no Needle 3 entry.
+- **Batched prefill regressed 50%** when the int8 cache landed, because
+  matching on the key/value representation inside the attention loops sits
+  between the compiler and the dot product. Attention is monomorphised over the
+  representation now; 427.7 ms against 439.8 ms before the int8 work.
+
 ## [0.3.0] - 2026-09-18
 
 Adds support for **Needle 3** (`Cactus-Compute/needle3`). v3 lands alongside v1
@@ -56,33 +128,6 @@ in [docs/v3-port-record.md](docs/v3-port-record.md).
 - **`kv_bytes_at(seq_len, precision)`**, and `kv_bytes_int8` on WASM, so a
   caller sizing a budget gets the figure for the cache it will actually
   allocate. Asserted against the real allocation rather than derived on paper.
-- **Selectable depth** — `V3Engine::load_with_depth`, `--layers N` on the CLI,
-  `NeedleV3Wasm.load_with_depth`, `V3Engine.load_with_depth` in Python and
-  `needle_v3_load_with_depth` in C. Needle 3 is a laddered model: every depth
-  from 2 to 20 blocks is a trained subnetwork. Upstream ships one by rewriting
-  the container; this takes the same slice from the full file, so a single
-  35 MB download serves every rung — a shallow pass for a simple command, the
-  full stack for a hard one. 8 blocks needs 3.5 MB of key/value cache against
-  20 blocks' 8.8 MB at 512 tokens.
-
-  The kept blocks are chosen by bisecting from both endpoints, not by
-  truncation, so rungs nest and block 0 and the last block are always present.
-  The slice is exact: Cactus-Quants packs each row independently, so the mHC
-  lane matrices are cut with `CqWeight::select_rows` and keep the codes they
-  were trained with.
-
-  Held to the same standard as the full model: every rung from 2 to 20 blocks is
-  compared against upstream's own `ladder_slice` over the same container, worst
-  **1.258e-5** relative deviation with **zero** argmax mismatches across 399
-  positions. The 20-block row reproduces the headline 9.0e-6. Geometry is
-  separately checked against containers built by upstream's exporter.
-
-  On the shipped weights, 2 and 4 blocks do not produce usable tool calls; 6
-  upward do. That is the model at these widths, not the slice — the numeric
-  parity at those depths is unchanged.
-
-### Changed
-
 - The CLI dispatches on the container tag rather than the `.cact` extension,
   since both v2 and v3 use it.
 - The chat prompt moved to `needle-infer::prompt`, shared by v2 and v3 —
@@ -332,7 +377,8 @@ Initial public release.
 - INT4 matvec 512×512 (AVX2): 83 µs / 3.2 Gelem/s
 - CLI binary: 533 KB stripped; WASM module: 260 KB (`wasm-opt -Oz`)
 
-[Unreleased]: https://github.com/geekgineer/needle-rs/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/geekgineer/needle-rs/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/geekgineer/needle-rs/releases/tag/v0.3.1
 [0.3.0]: https://github.com/geekgineer/needle-rs/releases/tag/v0.3.0
 [0.2.1]: https://github.com/geekgineer/needle-rs/releases/tag/v0.2.1
 [0.2.0]: https://github.com/geekgineer/needle-rs/releases/tag/v0.2.0

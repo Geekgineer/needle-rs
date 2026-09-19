@@ -168,6 +168,43 @@
         </div>
       </div>
 
+      <!-- Runtime shape: what the model costs, before running it -->
+      <div id="runtime-panel" class="hidden mt-5 border border-gray-800 rounded-lg p-4 bg-gray-900/30">
+        <div class="flex items-baseline justify-between mb-3">
+          <span class="text-[10px] text-gray-500 uppercase tracking-wider">Runtime shape</span>
+          <span class="text-[11px] text-gray-600">one download, any depth</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-5 items-start">
+          <div id="depth-wrapper">
+            <div class="flex items-baseline justify-between mb-1.5">
+              <label for="depth-slider" class="text-xs text-gray-400">Depth</label>
+              <span class="mono text-xs text-white"><span id="depth-value">20</span> <span class="text-gray-600">of 20 blocks</span></span>
+            </div>
+            <input id="depth-slider" type="range" min="2" max="20" value="20" step="1"
+              class="w-full accent-[#CE422B] cursor-pointer" />
+            <p class="text-[11px] text-gray-600 mt-2 leading-relaxed">
+              Needle 3 is trained so every depth from 2 to 20 blocks is a usable
+              model. Shallower is faster and needs less cache.
+              <span id="depth-warn" class="text-[#E8633F]"></span>
+            </p>
+          </div>
+
+          <div class="sm:border-l sm:border-gray-800 sm:pl-5 min-w-[170px]">
+            <label id="kv-int8-wrapper" class="inline-flex items-center gap-2 cursor-pointer select-none mb-3" title="Store the key/value cache at 8 bits — the width the container declares">
+              <input id="kv-int8-toggle" type="checkbox" class="sr-only peer" />
+              <span class="toggle relative w-8 h-[18px] rounded-full bg-gray-700 flex items-center px-0.5">
+                <span class="toggle-knob w-3.5 h-3.5 rounded-full bg-white block"></span>
+              </span>
+              <span class="text-xs text-gray-400">int8 KV cache</span>
+            </label>
+            <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Session cache</div>
+            <div class="mono text-lg text-white leading-none"><span id="kv-estimate">—</span> <span class="text-[11px] text-gray-500">MB</span></div>
+            <div class="text-[11px] text-gray-600 mt-1">at 512 tokens</div>
+          </div>
+        </div>
+      </div>
+
       <div class="flex flex-wrap items-center gap-4 mt-4">
         <button id="run-btn"
           class="bg-[#CE422B] hover:bg-[#E8633F] text-white px-5 py-2.5 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
@@ -352,7 +389,7 @@
           "<a href='https://huggingface.co/Cactus-Compute/needle3' class='underline hover:text-gray-400' target='_blank' rel='noopener'>HuggingFace</a>" +
           ". At 35 MB it is the largest of the three — worth it when quality matters, " +
           "but Needle 2 is a quarter the download. Weights are Apache-2.0; the runtime stays MIT.",
-        caps: { constrain: true, maxTokens: true, confidence: true, retrieval: false, think: true, stream: true },
+        caps: { constrain: true, maxTokens: true, confidence: true, retrieval: false, think: true, stream: true, depth: true, kvInt8: true },
         capsNote: "These Needle 3 weights carry no retrieval head, so tool ranking is unavailable — use Needle 2 for that.",
         headsNote:
           "These Needle 3 weights ship a confidence head but no contrastive head. Confidence scores a finished " +
@@ -371,7 +408,9 @@ engine.kv_bytes(512);                     // what a session will cost`,
         async load(init, mod, onProgress) {
           const cact = await onProgress(`${HF_V3}/needle3.cact`, "model", this.bytes);
           const e = mod.NeedleV3Wasm.load(cact);
-          return { engine: e, downloaded: cact.length };
+          // Kept so the depth control can re-slice without downloading again —
+          // which is the whole point of the ladder.
+          return { engine: e, downloaded: cact.length, cact };
         },
       },
       v2: {
@@ -386,7 +425,7 @@ engine.kv_bytes(512);                     // what a session will cost`,
           "One <span class='mono text-gray-500'>.cact</span> file streamed from " +
           "<a href='https://huggingface.co/Cactus-Compute/needle2' class='underline hover:text-gray-400' target='_blank' rel='noopener'>HuggingFace</a>" +
           " and cached by your browser. It carries the weights, the architecture geometry <em>and</em> the tokenizer — there is no vocabulary file to fetch.",
-        caps: { constrain: true, maxTokens: true, confidence: true, retrieval: true, think: true, stream: true },
+        caps: { constrain: true, maxTokens: true, confidence: true, retrieval: true, think: true, stream: true, depth: false, kvInt8: false },
         capsNote: "",
         headsNote:
           "Needle v2 ships two auxiliary heads alongside the language model, and both run here. " +
@@ -419,7 +458,7 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
           "Weights and vocabulary streamed from " +
           "<a href='https://huggingface.co/Abdalrahman/needle-rs-safetensors' class='underline hover:text-gray-400' target='_blank' rel='noopener'>HuggingFace</a>" +
           ". Two files: v1 keeps the tokenizer outside the weights.",
-        caps: { constrain: false, maxTokens: false, confidence: false, retrieval: true, think: false, stream: true },
+        caps: { constrain: false, maxTokens: false, confidence: false, retrieval: true, think: false, stream: true, depth: false, kvInt8: false },
         capsNote: "v1 is always constrained and greedy-only — those controls do not apply.",
         headsNote:
           "Needle v1 has a contrastive retrieval head but no confidence head, so only retrieval is available here.",
@@ -457,6 +496,7 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
     let engine = null;
     let active = null;  // the MODELS entry currently loaded
     let lastRun = null; // {query, tools, text} — the confidence head needs a completion
+    let cactBytes = null; // kept so a depth change re-slices without a download
     let wasmMod = null;
 
     // ---------- status ----------
@@ -565,6 +605,39 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
       }
     }
 
+    /** The session cache the current depth and precision would allocate. */
+    function refreshCacheEstimate() {
+      if (!engine || !active) return;
+      const int8 = active.caps.kvInt8 && $("kv-int8-toggle").checked;
+      // Asked of the engine rather than derived here: v3 mixes local and global
+      // layers, so the cost is not linear in depth and a JS guess would drift.
+      const bytes = int8 && engine.kv_bytes_int8
+        ? engine.kv_bytes_int8(512)
+        : engine.kv_bytes(512);
+      $("kv-estimate").textContent = (bytes / 1048576).toFixed(1);
+    }
+
+    /** Re-slice the loaded container at a new depth. No download. */
+    async function reslice(depth) {
+      if (!cactBytes || !active || !active.caps.depth) return;
+      setStatus("loading", `slicing to ${depth} blocks`);
+      await new Promise((r) => requestAnimationFrame(r));
+      const sliced = wasmMod.NeedleV3Wasm.load_with_depth(cactBytes, depth);
+      if (!sliced) { setStatus("error", `depth ${depth} is outside the ladder`); return; }
+      if (engine && typeof engine.free === "function") { try { engine.free(); } catch {} }
+      engine = sliced;
+      lastRun = null;                       // the old completion came from another model
+      $("heads-output").classList.add("hidden");
+      $("depth-value").textContent = String(depth);
+      // Below six blocks the shipped weights stop producing usable calls. Say so
+      // rather than letting a visitor conclude the runtime is broken.
+      $("depth-warn").textContent = depth < 6
+        ? " At this depth the shipped weights do not produce usable tool calls."
+        : "";
+      refreshCacheEstimate();
+      setStatus("ready", `${active.name} ready · ${depth} blocks`);
+    }
+
     /** Show only the controls the loaded version supports. */
     function applyCapabilities(m) {
       const c = m.caps;
@@ -574,6 +647,17 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
       $("caps-note").textContent = m.capsNote;
       $("heads-note").innerHTML = m.headsNote;
       $("conf-card").classList.toggle("hidden", !c.confidence);
+      $("runtime-panel").classList.toggle("hidden", !(c.depth || c.kvInt8));
+      $("depth-wrapper").classList.toggle("hidden", !c.depth);
+      $("kv-int8-wrapper").classList.toggle("hidden", !c.kvInt8);
+      if (c.depth && engine) {
+        const n = engine.num_layers();
+        $("depth-slider").max = String(n);
+        $("depth-slider").value = String(n);
+        $("depth-value").textContent = String(n);
+        $("depth-slider").nextElementSibling; // no-op, keeps the label in sync below
+      }
+      refreshCacheEstimate();
       $("code-sample").textContent = m.code;
       $("stat-weights").textContent = fmtMB(m.bytes);
       document.querySelectorAll("[data-weights-label]").forEach((el) => {
@@ -596,11 +680,12 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
         if (kb) $("stat-runtime").textContent = kb;
 
         setStatus("loading", `downloading ${m.name}`);
-        const { engine: e, downloaded } = await m.load(wasmMod.default, wasmMod, fetchWithProgress);
+        const { engine: e, downloaded, cact } = await m.load(wasmMod.default, wasmMod, fetchWithProgress);
         if (!e) throw new Error(`${m.name} failed to load — see the console`);
 
         engine = e;
         active = m;
+        cactBytes = cact ?? null;
         $("stat-weights").textContent = fmtMB(downloaded);
         $("progress-wrapper").classList.add("hidden");
         $("load-section").classList.add("hidden");
@@ -632,6 +717,7 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
       if (engine && typeof engine.free === "function") { try { engine.free(); } catch {} }
       engine = null;
       active = null;
+      cactBytes = null;
       $("switch-bar").classList.add("hidden");
       $("query-section").classList.add("hidden");
       $("heads-section").classList.add("hidden");
@@ -665,9 +751,11 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
       const t0 = performance.now();
       let text;
       try {
-        if (constrain) {
-          // Not streamed: the grammar mask depends on the whole payload so far.
-          text = engine.generate(query, tools, maxTokens, 0, 0, true);
+        const kvInt8 = caps.kvInt8 && $("kv-int8-toggle").checked;
+        if (constrain || kvInt8) {
+          // Not streamed: the grammar mask depends on the whole payload so far,
+          // and `generate` is where the cache precision is selected.
+          text = engine.generate(query, tools, maxTokens, 0, 0, constrain, kvInt8);
           $("output-box").textContent = text;
         } else {
           text = engine.run_stream(query, tools, (_id, piece) => {
@@ -692,7 +780,11 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
       }
       const ms = performance.now() - t0;
       $("stat-latency").textContent = Math.round(ms);
-      $("timing").textContent = `${Math.round(ms)} ms · ${active.name}`;
+      const shape = [
+        active.caps.depth ? `${engine.num_layers()} blocks` : null,
+        active.caps.kvInt8 && $("kv-int8-toggle").checked ? "int8 cache" : null,
+      ].filter(Boolean).join(" · ");
+      $("timing").textContent = `${Math.round(ms)} ms · ${active.name}${shape ? " · " + shape : ""}`;
 
       if (caps.think) {
         const think = extractBetween(text, "<think>", "</think>");
@@ -780,6 +872,16 @@ engine.retrieve_tools(query, descs, 3);   // rank tools by relevance`,
         $("analyze-btn").disabled = false;
       }
     };
+
+    // Depth is applied on release rather than on every tick: each change
+    // re-slices the model, which is fast but not free.
+    $("depth-slider").addEventListener("input", (e) => {
+      $("depth-value").textContent = e.target.value;
+    });
+    $("depth-slider").addEventListener("change", (e) => {
+      reslice(Number(e.target.value));
+    });
+    $("kv-int8-toggle").addEventListener("change", refreshCacheEstimate);
 
     $("query-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && engine && !$("run-btn").disabled) $("run-btn").click();

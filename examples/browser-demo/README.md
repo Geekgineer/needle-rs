@@ -36,6 +36,16 @@ engines.
   panel is hidden rather than shown empty. (The architecture defines an
   embedding head; it is not in this checkpoint.)
 
+- **Runtime shape**, for Needle 3: a depth slider and an int8 cache toggle.
+  Needle 3 is a laddered model — every depth from 2 to 20 blocks is a trained
+  subnetwork — so moving the slider re-slices the already-downloaded container
+  through `load_with_depth` and never fetches again. The session-cache figure
+  beside it is asked of the engine (`kv_bytes` / `kv_bytes_int8`) rather than
+  computed in the page, because v3 mixes local and global layers and the cost is
+  not linear in depth. Below six blocks the page says plainly that the shipped
+  weights stop producing usable calls, so a visitor does not read the model's
+  limits as the runtime's.
+
 The spec cards read measured values: the runtime size comes from the actual
 `PerformanceResourceTiming` entry for the wasm module and the model size from the
 bytes received, so they cannot drift from reality.

@@ -22,7 +22,7 @@ default = []
 parallel = ["needle-core/parallel"]
 
 [dependencies]
-needle-core = { path = "../needle-core", version = "0.3.0" }
+needle-core = { path = "../needle-core", version = "0.3.1" }
 
 [dev-dependencies]
 serde_json = "1"

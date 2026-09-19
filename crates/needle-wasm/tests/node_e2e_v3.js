@@ -83,6 +83,22 @@ ok(
   "the int8 cache produces the same tool call",
 );
 
+// The browser demo's depth slider calls exactly these.
+ok(e.num_layers() === 20, "num_layers reports the container's depth");
+const rung = NeedleV3Wasm.load_with_depth(bytes, 8);
+ok(rung !== undefined, "load_with_depth returns an 8-block rung");
+ok(rung.num_layers() === 8, "the rung reports its own depth");
+ok(rung.kv_bytes(512) < e.kv_bytes(512), "a shallower rung needs less cache");
+console.log(`  8-block rung -> ${rung.run_json(q, TOOLS)}`);
+ok(
+  extract_tool_call_v3(rung.run(q, TOOLS)) !== null,
+  "the rung still produces a tool call",
+);
+ok(
+  NeedleV3Wasm.load_with_depth(bytes, 99) === undefined,
+  "a depth outside the ladder is refused",
+);
+
 // Both generations must coexist in one module.
 if (fs.existsSync(CACT_V2)) {
   const v2 = NeedleV2Wasm.load(new Uint8Array(fs.readFileSync(CACT_V2)));

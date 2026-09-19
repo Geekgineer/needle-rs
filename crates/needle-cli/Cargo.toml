@@ -19,5 +19,5 @@ name = "needle-rs"
 path = "src/main.rs"
 
 [dependencies]
-needle-infer = { path = "../needle-infer", version = "0.3.0", features = ["parallel"] }
-needle-core = { path = "../needle-core", version = "0.3.0", features = ["std"] }
+needle-infer = { path = "../needle-infer", version = "0.3.1", features = ["parallel"] }
+needle-core = { path = "../needle-core", version = "0.3.1", features = ["std"] }
