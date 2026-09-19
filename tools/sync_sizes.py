@@ -11,8 +11,9 @@ of them at once: the WASM module went 529 -> 537 -> 560 KB across three rounds
 and each time the docs had to be chased. This makes the build the source of
 truth and the docs a projection of it.
 
-    python3 tools/sync_sizes.py            # measure and rewrite
-    python3 tools/sync_sizes.py --check    # fail if anything has drifted
+    python3 tools/sync_sizes.py               # measure and rewrite (release step)
+    python3 tools/sync_sizes.py --check       # fail if anything has drifted
+    python3 tools/sync_sizes.py --check-bands # ceilings only — what CI runs
 
 `--check` is what CI runs. It never edits; it reports what is stale and exits 1,
 so a pull request that grows the module cannot land with prose claiming the old
@@ -46,6 +47,23 @@ WASM_OPT_FLAGS = [
 
 def kb(n):
     return f"{round(n / 1024)} KB"
+
+
+def measure_wasm_only():
+    """Just the optimised module — buildable on any platform, cheap in CI."""
+    tmp = ROOT / "pkg-bands"
+    shutil.rmtree(tmp, ignore_errors=True)
+    subprocess.run(
+        ["wasm-pack", "build", "crates/needle-wasm", "--target", "web",
+         "--release", "--out-dir", "../../pkg-bands/"],
+        cwd=ROOT, check=True, capture_output=True,
+    )
+    raw = tmp / "needle_wasm_bg.wasm"
+    subprocess.run(["wasm-opt", str(raw), *WASM_OPT_FLAGS, "-o", str(raw)],
+                   check=True, capture_output=True)
+    out = {"wasm": raw.stat().st_size}
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out
 
 
 def measure_local():
@@ -203,9 +221,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="report drift and exit 1; never edit")
+    ap.add_argument("--check-bands", action="store_true",
+                    help="verify only the prose band ceilings; portable and cheap")
     ap.add_argument("--offline", action="store_true",
                     help="skip the live deployment measurement")
     args = ap.parse_args()
+
+    # Band checking needs the module and nothing else. Exact figures are
+    # platform-dependent — BENCHMARKS.md says so — so comparing a macOS-measured
+    # table against a Linux build fails by construction, and the test counts
+    # need weights and a full run. CI therefore enforces the ceilings, which is
+    # the property that actually matters, and the exact tables are synced on the
+    # machine whose numbers they document.
+    if args.check_bands:
+        facts = measure_wasm_only()
+        broken = check_bands(facts)
+        for b in broken:
+            print(f"BAND: {b}")
+        if broken:
+            return 1
+        print(f"prose bands hold: module is {kb(facts['wasm'])}")
+        return 0
 
     facts = measure_local()
     facts.update(counts())

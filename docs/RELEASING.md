@@ -78,11 +78,17 @@ git -c user.name="..." -c user.email="..." tag -a vX.Y.Z -m "needle-rs X.Y.Z"
 ```
 
 1. **Sync the size and count claims.** `python3 tools/sync_sizes.py` measures
-   the artifacts and rewrites the few documents that quote exact figures;
-   `--check` is what CI runs. Prose elsewhere quotes a band ("under 600 KB")
-   rather than a number, so ordinary growth does not invalidate a dozen files —
-   but each band has a ceiling the check enforces, so it cannot quietly become
-   false. `docs/sizes.json` is the record of what was measured.
+   the artifacts and rewrites the few documents that quote exact figures, and
+   records what it measured in `docs/sizes.json`.
+
+   Run it on **macOS/aarch64** — BENCHMARKS.md documents its figures as measured
+   there, and a Linux build produces different binary sizes, so syncing from
+   another platform would silently change what those tables claim to be.
+
+   Prose elsewhere quotes a band ("under 600 KB") rather than a number, so
+   ordinary growth does not invalidate a dozen files. CI runs
+   `--check-bands`, which builds only the WASM module and enforces the
+   ceilings — portable, and the part that could otherwise go quietly false.
 2. **Bump the version in both manifests.** `Cargo.toml`
    (`workspace.package.version`) and `pyproject.toml` (`project.version`). They
    must match the tag: the `version-guard` job fails the whole run before

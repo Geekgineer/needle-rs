@@ -240,15 +240,19 @@ jobs:
 
       # The browser demo calls exactly these bindings, so a break shows up here
       # rather than in a deployed page.
-      # Sizes and test counts are facts about the build. This fails if a
-      # document still claims an old one, or if growth has quietly made a prose
-      # band ("under 600 KB") untrue. Docs are a projection of the build, not a
-      # place to remember numbers by hand.
-      - name: Size and count claims match the build
+      # Prose quotes a band ("under 600 KB") rather than a byte count, so
+      # ordinary growth does not invalidate a dozen documents. This enforces the
+      # ceiling, which is the part that could otherwise go quietly false.
+      #
+      # Only the bands are checked here. Exact figures are platform-dependent —
+      # BENCHMARKS.md documents its numbers as macOS/aarch64 — so comparing them
+      # against a Linux build would fail by construction; they are synced with
+      # `tools/sync_sizes.py` on the machine whose numbers they document.
+      - name: Prose size bands still hold
         run: |
           cargo install wasm-pack --version 0.13.1 --locked || true
           npm install -g binaryen
-          python3 tools/sync_sizes.py --check
+          python3 tools/sync_sizes.py --check-bands
 
       - name: Verify the v3 WASM bindings
         run: |
