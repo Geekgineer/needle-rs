@@ -10,7 +10,7 @@
 
 # needle-rs
 
-A working tool-calling LLM in **537 KB of WebAssembly** — 195 KB over the wire. Runs in
+A working tool-calling LLM in **under 600 KB of WebAssembly** — about 200 KB over the wire. Runs in
 the browser, Node.js, Deno, Bun and Cloudflare Workers. No server, no API key, no
 data leaving the device.
 

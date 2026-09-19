@@ -55,10 +55,22 @@ that were not accurate.
   by painting a red dot reading "engine.contrastive_dim is not a function".
 - **The demo badged itself `v0.2` / "Needle v1 + v2"** and pre-selected Needle 2,
   on a page a Needle 3 release link points at.
-- **"162 KB over the wire" was a local measurement.** `brotli -q 11` produces
-  that; Cloudflare compresses at a lower level, so a visitor actually downloads
-  **195 KB**. Corrected everywhere, along with the module's own size — 537 KB
-  after `wasm-opt -Oz`, not 529 — and the CLI (765 KB) and C dylib (815 KB).
+- **Every published size figure was wrong, in two separate ways.** "162 KB over
+  the wire" was a local `brotli -q 11` measurement; Cloudflare compresses at a
+  lower level, so what a visitor downloads is larger. And the module had grown
+  past the "529 KB" the docs carried. Re-measured against the live deploy rather
+  than a local build, since that is what users receive:
+
+  | | 0.3.1 |
+  |---|---|
+  | WASM module, after `wasm-opt -Oz` | **560 KB** |
+  | — over the wire, as Cloudflare serves it | **203 KB** |
+  | — gzipped / `brotli -q 11` locally | 221 KB / 169 KB |
+  | — unoptimised, what `wasm-pack` alone emits | 633 KB |
+  | CLI binary, stripped | **781 KB** |
+  | C shared library | **832 KB** |
+
+  Depth selection is most of the growth over 0.3.0's 537 KB.
 - **Licensing was wrong in three public places.** The README footer, the npm
   README and the PyPI README all said the models are "also MIT". Upstream is
   Apache-2.0, as are Needle 3's weights; Needle 2's and Needle 1's are MIT.

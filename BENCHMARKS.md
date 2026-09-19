@@ -370,14 +370,14 @@ a two-generation build on an M4 Max and are not comparable.
 
 | Artifact | Size | Notes |
 |---|---|---|
-| CLI binary (`needle-rs`) | **765 KB** | stripped release, all three engines |
-| C shared library (`libneedle_c.dylib`) | **815 KB** | cdylib, stable C ABI, all three surfaces |
-| WASM module (`needle_wasm_bg.wasm`) | **537 KB** | after `wasm-opt -Oz`; **195 KB** as Cloudflare Pages actually serves it (brotli), 204 KB gzipped, 162 KB if you compress it yourself at `brotli -q 11` |
-| — same module, unoptimised | 605 KB | what `wasm-pack build` alone emits |
+| CLI binary (`needle-rs`) | **781 KB** | stripped release, all three engines |
+| C shared library (`libneedle_c.dylib`) | **832 KB** | cdylib, stable C ABI, all three surfaces |
+| WASM module (`needle_wasm_bg.wasm`) | **560 KB** | after `wasm-opt -Oz`; **203 KB** as Cloudflare Pages actually serves it (brotli), 221 KB gzipped, 169 KB if you compress it yourself at `brotli -q 11` |
+| — same module, unoptimised | 633 KB | what `wasm-pack build` alone emits |
 
 `wasm-opt` is **not** run by `wasm-pack` here — the crate sets
 `wasm-opt = false`, because the binary wasm-pack downloads fails in this build
-environment. Run it yourself for the 537 KB figure:
+environment. Run it yourself for the 560 KB figure:
 
 ```bash
 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
@@ -392,8 +392,8 @@ Weights, per version:
 | v2 | `needle2.cact` (weights + geometry + tokenizer) | **13.7 MB** |
 | v1 | `needle.safetensors` + `vocab.txt` | **22 MB** + 122 KB |
 
-Smallest complete browser deployment is still v2: 537 KB of runtime plus a
-13.7 MB container, 195 KB + 13.7 MB over the wire as served. A generation
+Smallest complete browser deployment is still v2: 560 KB of runtime plus a
+13.7 MB container, 560 KB + 13.7 MB over the wire as served. A generation
 session needs roughly 23 MB of working memory on top (see [Memory](#memory)).
 v3 is the same runtime with a 35.3 MB container and a larger cache — see the
 Needle v3 section.
@@ -411,7 +411,7 @@ Needle v3 section.
 On disk: the CPU-only virtualenv used to generate the parity fixtures here
 (`jax`, `flax`, `numpy` and their transitive deps, Python 3.12) measures
 **479 MB**, of which `jaxlib` alone is 268 MB. A CUDA build is several times
-that. The equivalent needle-rs deployment is a 765 KB binary, or 537 KB of
+that. The equivalent needle-rs deployment is a 781 KB binary, or 560 KB of
 WebAssembly.
 
 ---

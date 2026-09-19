@@ -1,0 +1,13 @@
+{
+ "wasm_unoptimised": "647818 B (633 KB)",
+ "glue_js": "41423 B (40 KB)",
+ "wasm": "574170 B (561 KB)",
+ "brotli_local": "172687 B (169 KB)",
+ "cli": "799888 B (781 KB)",
+ "c_dylib": "851504 B (832 KB)",
+ "rust_tests": 369,
+ "wasm_assertions": 100,
+ "wire": "208090 B (203 KB)",
+ "gzip": "226581 B (221 KB)",
+ "live_raw": "573654 B (560 KB)"
+}

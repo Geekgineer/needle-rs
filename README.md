@@ -58,12 +58,12 @@ AI tool calling usually means a paid API round-trip or hundreds of megabytes on 
 <tr><td>Hosted function calling</td><td align="right">SDK + API</td><td align="right">$ per token</td><td align="center">leaves device</td><td align="center">✗</td></tr>
 <tr><td>llama.cpp + a 1B local model</td><td align="right">700 MB+</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 <tr><td>ONNX Runtime Web + a model</td><td align="right">8 MB + model</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
-<tr><td><b><code>needle-rs</code> + Needle 3</b></td><td align="right"><b>537 KB + 35.3 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
-<tr><td><code>needle-rs</code> + Needle 2 <sub>(smallest)</sub></td><td align="right">537 KB + 13.7 MB</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
+<tr><td><b><code>needle-rs</code> + Needle 3</b></td><td align="right"><b>560 KB + 35.3 MB</b></td><td align="right"><b>free</b></td><td align="center"><b>local</b></td><td align="center"><b>✓</b></td></tr>
+<tr><td><code>needle-rs</code> + Needle 2 <sub>(smallest)</sub></td><td align="right">560 KB + 13.7 MB</td><td align="right">free</td><td align="center">local</td><td align="center">✓</td></tr>
 </tbody>
 </table>
 
-The runtime is 537 KB of WebAssembly (195 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; a Needle 3 session adds 8.8 MB of key/value cache at 512 tokens, or 2.3 MB with `--kv-int8` — see [choosing a generation](#generations).
+The runtime is under 600 KB of WebAssembly (about 200 KB over the wire, brotli) with **one** runtime dependency, and carries all three model generations. A Needle 2 session needs about 23 MB of working memory; a Needle 3 session adds 8.8 MB of key/value cache at 512 tokens, or 2.3 MB with `--kv-int8` — see [choosing a generation](#generations).
 
 <br/>
 
@@ -270,8 +270,8 @@ Every example in [`examples/`](examples/) runs on all three.
 <table>
 <thead><tr><th align="left">Target</th><th align="center">Status</th><th align="right">Binary</th></tr></thead>
 <tbody>
-<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>537 KB</code> <sub>195 KB over the wire</sub></td></tr>
-<tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>765 KB</code></td></tr>
+<tr><td>Browser / Node.js / Cloudflare Workers <sub>(WASM)</sub></td><td align="center">✓</td><td align="right"><code>&lt;600 KB</code> <sub>about 200 KB over the wire</sub></td></tr>
+<tr><td>Linux / macOS / Windows CLI</td><td align="center">✓</td><td align="right"><code>560 KB</code></td></tr>
 <tr><td>Python <sub>(abi3 wheel, CPython ≥ 3.8)</sub></td><td align="center">✓</td><td align="right"><code>pip install needle-rs</code></td></tr>
 <tr><td>C / C++ / Go / Swift <sub>(FFI)</sub></td><td align="center">✓</td><td align="right"><code>needle_v3_*</code> + <code>needle_v2_*</code> + <code>needle_*</code></td></tr>
 <tr><td><code>no_std</code> embedded <sub>(Rust)</sub></td><td align="center">✓</td><td align="right"><sub>size varies</sub></td></tr>
@@ -348,7 +348,7 @@ The failure mode for a from-scratch reimplementation is silent drift: output tha
 
 **Needle v1** — 560 generated examples across five tool-name conventions, 0–8 parameters, 1–20 tools: **560/560 token-exact**.
 
-Fixtures are committed, so the contract is version-pinned and reproducible without re-running Python. 341 Rust tests and 94 WASM binding assertions run in CI, in both the default and `parallel` feature configurations, alongside the C ABI and Python wheel.
+Fixtures are committed, so the contract is version-pinned and reproducible without re-running Python. 369 Rust tests and 100 WASM binding assertions run in CI, in both the default and `parallel` feature configurations, alongside the C ABI and Python wheel.
 
 A measured caution, because it cost two debugging sessions: the reference config ships `dtype="bfloat16"`, and measuring against a bfloat16 oracle makes a *correct* implementation look catastrophically wrong — a relative error of **9.7**, i.e. about 970%, not a small number with a missing exponent. Every figure above is measured against an f32 reference. See [docs/v3-port-record.md](docs/v3-port-record.md).
 
@@ -386,7 +386,7 @@ Full methodology — including the optimisations that were measured and **reject
 
 - **In-browser agents.** Route a user's sentence to one of your app's functions with no backend. See [`examples/browser-demo`](examples/browser-demo) and the [live demo](https://needle-rs.pages.dev).
 - **Dynamic tool sets.** Generate tools from live state each turn and let the model pick — [`examples/dom-editor`](examples/dom-editor) rewrites a page from plain English.
-- **Edge workers.** 537 KB of WASM fits inside a Cloudflare Worker.
+- **Edge workers.** The whole runtime fits inside a Cloudflare Worker.
 - **Large tool catalogues.** Narrow hundreds of tools with the retrieval head before the call — Needle 2 only, which is the one generation that ships a contrastive head.
 - **Uncertainty-aware routing.** Use the confidence head to escalate to a larger model only when needed.
 - **Offline and embedded.** `no_std` kernels, one dependency, no allocator assumptions beyond `alloc`.

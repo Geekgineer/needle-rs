@@ -240,6 +240,16 @@ jobs:
 
       # The browser demo calls exactly these bindings, so a break shows up here
       # rather than in a deployed page.
+      # Sizes and test counts are facts about the build. This fails if a
+      # document still claims an old one, or if growth has quietly made a prose
+      # band ("under 600 KB") untrue. Docs are a projection of the build, not a
+      # place to remember numbers by hand.
+      - name: Size and count claims match the build
+        run: |
+          cargo install wasm-pack --version 0.13.1 --locked || true
+          npm install -g binaryen
+          python3 tools/sync_sizes.py --check
+
       - name: Verify the v3 WASM bindings
         run: |
           rustup target add wasm32-unknown-unknown

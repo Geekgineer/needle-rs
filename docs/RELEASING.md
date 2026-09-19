@@ -77,16 +77,22 @@ rather not store it, is to pass it inline:
 git -c user.name="..." -c user.email="..." tag -a vX.Y.Z -m "needle-rs X.Y.Z"
 ```
 
-1. **Bump the version in both manifests.** `Cargo.toml`
+1. **Sync the size and count claims.** `python3 tools/sync_sizes.py` measures
+   the artifacts and rewrites the few documents that quote exact figures;
+   `--check` is what CI runs. Prose elsewhere quotes a band ("under 600 KB")
+   rather than a number, so ordinary growth does not invalidate a dozen files —
+   but each band has a ceiling the check enforces, so it cannot quietly become
+   false. `docs/sizes.json` is the record of what was measured.
+2. **Bump the version in both manifests.** `Cargo.toml`
    (`workspace.package.version`) and `pyproject.toml` (`project.version`). They
    must match the tag: the `version-guard` job fails the whole run before
    anything uploads if they don't. This guard exists because npm takes its
    version from the tag while crates.io and PyPI take theirs from the manifests —
    a tag that outran a bump would publish three different versions, none
    retractable.
-2. **Update `CHANGELOG.md`** — move `Unreleased` to the new version, and refresh
+3. **Update `CHANGELOG.md`** — move `Unreleased` to the new version, and refresh
    the link definitions at the bottom.
-3. **Re-verify locally**, in both feature configurations:
+4. **Re-verify locally**, in both feature configurations:
    ```bash
    cargo test --workspace --release
    cargo test --workspace --release --features needle-core/parallel
@@ -112,14 +118,14 @@ git -c user.name="..." -c user.email="..." tag -a vX.Y.Z -m "needle-rs X.Y.Z"
    pip install --no-index --find-links dist/ needle-rs
    python crates/needle-python/tests/test_v3.py
    ```
-4. **Tag and push.**
+5. **Tag and push.**
    ```bash
    git tag -a v0.3.0 -m "needle-rs 0.3.0" && git push origin v0.3.0
    ```
-5. **Watch the run.** `version-guard` gates everything; if a publish job fails
+6. **Watch the run.** `version-guard` gates everything; if a publish job fails
    partway, re-running is safe — every publish step is idempotent (npm checks
    `npm view` first, `cargo publish` treats "already exists" as success).
-6. **Upload the Hugging Face weights** if the v1 conversion changed. Follow the
+7. **Upload the Hugging Face weights** if the v1 conversion changed. Follow the
    checklist in [hf-model-card.md](hf-model-card.md) — banner before README, or
    the CDN caches a broken image. v2 needs nothing here: needle-rs reads
    upstream's own `.cact` container, so there is no conversion to host.
@@ -177,7 +183,7 @@ this workflow is ever restructured:
 - `wasm-opt` is not run by wasm-pack (the crate sets `wasm-opt = false`, since
   the binary wasm-pack downloads fails in some environments). Both release
   workflows run it as an explicit step. A local `wasm-pack build` therefore
-  produces a 605 KB module where CI produces 537 KB.
+  produces a 633 KB module where CI produces 560 KB.
 - Python wheels are `abi3` (pyo3 `abi3-py38`), so each platform gets exactly one
   wheel that serves every CPython >= 3.8. 0.2.0 published 5 wheels, not 25, and
   they were verified to install and import on 3.13 and 3.14. `CIBW_BUILD` lists

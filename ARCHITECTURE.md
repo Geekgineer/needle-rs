@@ -347,8 +347,8 @@ the engine to JavaScript. Key constraints vs. native:
 - SIMD: the portable kernel is used for wasm32 (no SIMD128 path yet)
 
 One module exports `NeedleWasm` (v1), `NeedleV2Wasm` (v2) and `NeedleV3Wasm`
-(v3): **537 KB** after `wasm-opt -Oz`, 195 KB over the wire as Cloudflare
-serves it (162 KB at `brotli -q 11` if you compress it yourself).
+(v3): **560 KB** after `wasm-opt -Oz`, about 200 KB over the wire as Cloudflare
+serves it (169 KB at `brotli -q 11` if you compress it yourself).
 
 ```bash
 wasm-pack build crates/needle-wasm --target web --release --out-dir ../../pkg/
